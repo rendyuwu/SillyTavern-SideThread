@@ -136,3 +136,11 @@ framework above — it is the more capable project by a wide margin.
 
 The `/btw` idea is lifted from [Claude Code](https://claude.com/claude-code), where it asks a
 side question without disturbing the main thread.
+
+## License
+
+MIT — see [LICENSE](LICENSE). The reference framework above is MIT too.
+
+SillyTavern itself is AGPL-3.0. This extension carries no SillyTavern source: it reaches the
+host only through the `SillyTavern.getContext()` runtime global and ships separately, so it is
+licensed on its own terms.
