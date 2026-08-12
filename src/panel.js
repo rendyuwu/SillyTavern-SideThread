@@ -277,6 +277,8 @@ function renderTranscript() {
     scrollToBottom();
 }
 
+const TYPING_HTML = '<span class="btw-typing" aria-label="Waiting for the reply">●●●</span>';
+
 /**
  * @param {import('./thread.js').ThreadMessage} message
  * @param {number} index
@@ -295,7 +297,7 @@ function renderMessage(message, index) {
         body.innerHTML = renderMarkdown(message.content);
         decorateCodeBlocks(body);
     } else {
-        body.innerHTML = '<span class="btw-typing" aria-label="Waiting for the reply">●●●</span>';
+        body.innerHTML = TYPING_HTML;
     }
     wrapper.appendChild(body);
 
@@ -577,6 +579,12 @@ export async function ask(question) {
  * Patch one bubble in place instead of re-rendering the whole transcript, so
  * streaming does not fight the scroll position.
  *
+ * A stream opens before there is anything to show: a connection profile hands
+ * back chunks whose accumulated text is still empty, and a reasoning model can
+ * sit there for a while emitting nothing renderable. Rendering that as empty
+ * HTML wipes the waiting dots and leaves a blank bubble that reads as a dropped
+ * request, so the indicator stays put until real text arrives.
+ *
  * @param {number} index
  * @param {string} content
  */
@@ -586,8 +594,12 @@ function updateMessageBody(index, content) {
     const wrapper = transcript.querySelector(`.btw-message[data-index="${index}"] .btw-message-body`);
     if (!(wrapper instanceof HTMLElement)) return;
     const pinned = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 48;
-    wrapper.innerHTML = renderMarkdown(content);
-    decorateCodeBlocks(wrapper);
+    if (String(content).trim()) {
+        wrapper.innerHTML = renderMarkdown(content);
+        decorateCodeBlocks(wrapper);
+    } else {
+        wrapper.innerHTML = TYPING_HTML;
+    }
     if (pinned) scrollToBottom();
 }
 
