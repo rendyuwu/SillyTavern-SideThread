@@ -9,7 +9,7 @@ import { sendSideRequest, canStream, canAbort } from './llm.js';
 import { loadThread, saveThread, clearThread, threadForRequest, currentThreadId } from './thread.js';
 import { renderMarkdown, escapeHtml, extractCodeBlocks } from './markdown.js';
 import { listLorebooks, createLorebookEntry } from './lorebook.js';
-import { auditableBooks, batchTargets, buildStoryNow, collectAuditTargets, runAudit } from './audit.js';
+import { auditableBooks, batchTargets, buildStoryNow, collectAuditTargets, humanizeReport, runAudit } from './audit.js';
 
 const PANEL_ID = 'btw-panel';
 const GEOMETRY_KEY = 'btw_panel_geometry';
@@ -550,7 +550,7 @@ export async function ask(question) {
 
         reply.content = String(answer || '').trim();
         if (!reply.content) {
-            reply.content = '_(empty response — the backend returned nothing. Check the max response length and the selected model.)_';
+            reply.content = '*(empty response — the backend returned nothing. Check the max response length and the selected model.)*';
             reply.error = true;
         }
         setStatus('');
@@ -558,7 +558,7 @@ export async function ask(question) {
         const aborted = /** @type {any} */ (error)?.name === 'AbortError' || abortController?.signal.aborted;
         // renderMarkdown escapes its input, so the raw message goes in as-is.
         reply.content = aborted
-            ? '_(stopped)_'
+            ? '*(stopped)*'
             : `**Request failed:** ${/** @type {any} */ (error)?.message || String(error)}`;
         reply.error = true;
         if (!aborted) console.error(LOG_PREFIX, error);
@@ -722,7 +722,7 @@ async function startAudit(scope) {
         // The story block is re-sent with every batch, so its size is the real bill.
         pushAuditNote([
             `**Lore audit** — ${targets.length} target${targets.length === 1 ? '' : 's'} across ${batches.length} request${batches.length === 1 ? '' : 's'}, story context ${storyNow.length.toLocaleString()} chars each.`,
-            lastAuditElapsed ? `In-story time elapsed: ${lastAuditElapsed}` : '_No elapsed time given — ages cannot be recomputed reliably._',
+            lastAuditElapsed ? `In-story time elapsed: ${lastAuditElapsed}` : '*No elapsed time given — ages cannot be recomputed reliably.*',
         ].join('\n\n'));
 
         /** @type {import('./thread.js').ThreadMessage|null} */
@@ -747,12 +747,15 @@ async function startAudit(scope) {
                 current.content = text;
                 updateMessageBody(currentIndex, text);
             },
-            onBatchDone: (text, coverage) => {
+            onBatchDone: (text, coverage, index) => {
                 if (!current) return;
+                // Streaming showed the raw reply, ids and all; the settled version
+                // trades the coverage plumbing for names and addresses.
+                const report = humanizeReport(text, batches[index]);
                 const notes = coverage.missed.length
-                    ? `\n\n_Never ruled on in this batch: ${coverage.missed.map(target => target.id).join(', ')}._`
+                    ? `\n\n*Never ruled on in this batch: ${coverage.missed.map(target => target.title).join(', ')}.*`
                     : '';
-                current.content = `${String(text).trim() || '_(the backend returned nothing for this batch)_'}${notes}`;
+                current.content = `${report || '*(the backend returned nothing for this batch)*'}${notes}`;
                 renderTranscript();
                 persist();
             },
@@ -762,7 +765,7 @@ async function startAudit(scope) {
         if (outcome.missed.length) {
             lines.push(
                 `**${outcome.missed.length} target${outcome.missed.length === 1 ? '' : 's'} were never ruled on.** Not "clean" — simply unanswered:`,
-                outcome.missed.map(target => `- \`${target.id}\` ${target.label}`).join('\n'),
+                outcome.missed.map(target => `- **${target.title}** — \`${target.where}\``).join('\n'),
             );
         }
         pushAuditNote(
@@ -772,7 +775,7 @@ async function startAudit(scope) {
         setStatus('');
     } catch (error) {
         const aborted = /** @type {any} */ (error)?.name === 'AbortError' || abortController?.signal.aborted;
-        pushAuditNote(aborted ? '_(audit stopped)_' : `**Audit failed:** ${/** @type {any} */ (error)?.message || String(error)}`);
+        pushAuditNote(aborted ? '*(audit stopped)*' : `**Audit failed:** ${/** @type {any} */ (error)?.message || String(error)}`);
         if (!aborted) console.error(LOG_PREFIX, error);
         setStatus('');
     } finally {

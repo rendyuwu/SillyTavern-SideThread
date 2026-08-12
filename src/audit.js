@@ -22,7 +22,9 @@ import { sendSideRequest, canStream } from './llm.js';
 /**
  * @typedef {object} AuditTarget
  * @property {string} id Short handle the model echoes back (`E1`, `E2`, …).
- * @property {string} label Human address, shown in the report.
+ * @property {string} label Full address handed to the model.
+ * @property {string} title What the author calls this thing, for the report.
+ * @property {string} where Where to find it, for the report.
  * @property {'lorebook'|'card'|'persona'} kind
  * @property {string} content The text under review.
  * @property {string} [book] Lorebook file name, for lorebook targets.
@@ -79,6 +81,8 @@ export async function collectAuditTargets({ books, includeCard = true, includePe
                 id: nextId(),
                 kind: 'lorebook',
                 label: `LOREBOOK "${label}" · uid ${record.uid} · ${memo}`,
+                title: memo,
+                where: `${label} · uid ${record.uid}`,
                 book: label,
                 uid: record.uid,
                 keys,
@@ -111,6 +115,8 @@ export async function collectAuditTargets({ books, includeCard = true, includePe
                     id: nextId(),
                     kind: 'card',
                     label: `CHARACTER CARD "${character.name}" · field: ${field}`,
+                    title: `${character.name} — card ${field}`,
+                    where: `character card · ${character.name}`,
                     content,
                 });
             }
@@ -124,6 +130,8 @@ export async function collectAuditTargets({ books, includeCard = true, includePe
                 id: nextId(),
                 kind: 'persona',
                 label: `USER PERSONA "${trim(context.name1) || 'User'}" · description`,
+                title: `${trim(context.name1) || 'User'} — persona description`,
+                where: 'user persona',
                 content: description,
             });
         }
@@ -252,6 +260,52 @@ export function parseCoverage(text, batch) {
         findings: [...findings],
         missed: batch.filter(target => !accounted.has(target.id)),
     };
+}
+
+/**
+ * Turn the raw batch reply into something an author can read.
+ *
+ * The `E<n>` handles and the `OK:` line exist so coverage can be proved; they mean
+ * nothing to the person reading the report. "OK: E12, E13" names no entry, and a
+ * heading like "#### E11 — Vess Draskel" drops the one thing needed to go and fix
+ * it: which book, which uid. So the accounting is consumed here and replaced with
+ * the address this module already knows — which is also more trustworthy than
+ * whatever name the model chose to echo back.
+ *
+ * @param {string} text
+ * @param {AuditTarget[]} batch
+ * @returns {string}
+ */
+export function humanizeReport(text, batch) {
+    const byId = new Map(batch.map(target => [target.id, target]));
+    /** @type {string[]} */
+    const unchanged = [];
+
+    let out = String(text || '');
+
+    out = out.replace(/^[*_#>\s-]*OK\b\s*[:：]?([^\n]*)$/gim, (line, list) => {
+        const ids = [...String(list).matchAll(/\bE(\d+)\b/g)].map(match => `E${match[1]}`);
+        if (!ids.length) return line;
+        for (const id of ids) {
+            const target = byId.get(id);
+            if (target) unchanged.push(target.title);
+        }
+        return '';
+    });
+
+    out = out.replace(/^(#{1,6})\s*\**\s*(E\d+)\b[^\n]*$/gim, (line, hashes, id) => {
+        const target = byId.get(id);
+        return target ? `${hashes} ${target.title}\n\n\`${target.where}\`\n` : line;
+    });
+
+    out = out.replace(/\n{3,}/g, '\n\n').trim();
+
+    if (unchanged.length) {
+        // Asterisks, not underscores: renderMarkdown deliberately leaves `_` alone so
+        // that keys and identifiers survive, so `_text_` would render literally.
+        out += `${out ? '\n\n' : ''}*Unchanged: ${unchanged.join(', ')}.*`;
+    }
+    return out;
 }
 
 // ── Running ──────────────────────────────────────────────────────────────────

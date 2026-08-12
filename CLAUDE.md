@@ -169,6 +169,15 @@ across runs, so each run carries a token (`auditRunId`) and a stored summary off
 while that token is current; `onChatChanged()` bumps it and empties the index, since a summary
 persisted under another chat must never resolve against this one's entries.
 
+The ids are machinery, and `humanizeReport()` keeps them out of the report. It eats the `OK:` line
+and re-emits it as names ("Unchanged: Ash, Oriane"), and rewrites each `#### E<n>` heading into the
+entry's title plus the address this module knows — book and uid — rather than trusting whatever name
+the model echoed. Streaming shows the raw reply; `onBatchDone` replaces it with the humanized one.
+Without that pass the author reads "OK: E12, E13", which names nothing and locates nothing.
+
+New display strings use `*asterisk italics*`, never `_underscores_`: `renderInline()` deliberately
+omits underscore emphasis so keys and identifiers survive, so `_text_` renders literally.
+
 Stopping an audit is a coverage event, not just an early exit: a streaming connection profile
 resolves with partial text instead of throwing (`llm.js` `sendViaProfile`), so `runAudit()` reaches
 its own loop guard normally. It pushes every unread batch into `missed` and returns `stopped: true`,
