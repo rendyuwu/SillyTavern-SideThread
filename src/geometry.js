@@ -99,6 +99,58 @@ export function applyGeometry(panel, key) {
 }
 
 /**
+ * Keep the mobile sheet inside the *visual* viewport, so the virtual keyboard
+ * cannot cover the composer.
+ *
+ * A fixed panel is laid out against the layout viewport, and the keyboard does
+ * not reliably shrink that: iOS Safari ignores `interactive-widget` and only
+ * shrinks the visual viewport, so `100dvh` stays full height and the bottom of
+ * the sheet ends up behind the keyboard. Mirroring `visualViewport` into two
+ * custom properties puts it back. Where the layout viewport *does* resize
+ * (Android Chrome honouring `resizes-content`) the two agree, so this is a
+ * no-op there rather than a second, competing rule.
+ *
+ * @param {HTMLElement} panel
+ * @param {() => void} [onChange] runs after each apply, for scroll fix-ups
+ * @returns {() => void} teardown
+ */
+export function trackVisualViewport(panel, onChange) {
+    const viewport = window.visualViewport;
+    if (!viewport) return () => { /* no API — CSS dvh fallback stands */ };
+
+    let frame = 0;
+    const apply = () => {
+        frame = 0;
+        if (!isMobileLayout()) {
+            panel.style.removeProperty('--btw-vv-top');
+            panel.style.removeProperty('--btw-vv-height');
+            return;
+        }
+        // offsetTop is the visual viewport's offset *within* the layout viewport,
+        // which is exactly the frame a fixed element is positioned against.
+        panel.style.setProperty('--btw-vv-top', `${viewport.offsetTop}px`);
+        panel.style.setProperty('--btw-vv-height', `${viewport.height}px`);
+        onChange?.();
+    };
+    // Both events can fire per frame while the keyboard animates in.
+    const schedule = () => {
+        if (!frame) frame = requestAnimationFrame(apply);
+    };
+
+    viewport.addEventListener('resize', schedule);
+    viewport.addEventListener('scroll', schedule);
+    apply();
+
+    return () => {
+        if (frame) cancelAnimationFrame(frame);
+        viewport.removeEventListener('resize', schedule);
+        viewport.removeEventListener('scroll', schedule);
+        panel.style.removeProperty('--btw-vv-top');
+        panel.style.removeProperty('--btw-vv-height');
+    };
+}
+
+/**
  * @param {HTMLElement} panel
  * @param {HTMLElement} handle
  * @param {string} key

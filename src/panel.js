@@ -3,7 +3,7 @@
  */
 
 import { getSettings, debugLog, LOG_PREFIX } from './settings.js';
-import { applyGeometry, makeDraggable, makeResizable, observeResize, saveGeometry, isMobileLayout } from './geometry.js';
+import { applyGeometry, makeDraggable, makeResizable, observeResize, saveGeometry, isMobileLayout, trackVisualViewport } from './geometry.js';
 import { buildContext, countTokens } from './context.js';
 import { sendSideRequest, canStream, canAbort } from './llm.js';
 import { loadThread, saveThread, clearThread, threadForRequest, currentThreadId } from './thread.js';
@@ -30,6 +30,8 @@ let messages = [];
 let abortController = null;
 /** @type {(() => void)|null} */
 let teardownDrag = null;
+/** @type {(() => void)|null} */
+let teardownViewport = null;
 /** @type {ResizeObserver|null} */
 let resizeObserver = null;
 let busy = false;
@@ -111,6 +113,7 @@ function createPanel() {
 
     renderChips();
     applyGeometry(element, GEOMETRY_KEY);
+    teardownViewport = trackVisualViewport(element, onVisualViewportChange);
     if (localStorage.getItem(COLLAPSED_KEY) === 'true') setCollapsed(true);
 
     window.addEventListener('resize', onWindowResize);
@@ -120,6 +123,16 @@ function createPanel() {
 function onWindowResize() {
     if (!panel || panel.style.display === 'none') return;
     applyGeometry(panel, GEOMETRY_KEY);
+}
+
+/**
+ * The keyboard has just resized the sheet under us. The transcript keeps its
+ * scrollTop while losing height, so the newest message slides out of view right
+ * when the user is typing at it.
+ */
+function onVisualViewportChange() {
+    const input = panel?.querySelector('#btw-input');
+    if (input && document.activeElement === input) scrollToBottom();
 }
 
 function applyFontSize() {
@@ -630,6 +643,8 @@ export function restoreIfPreviouslyOpen() {
 export function destroyPanel() {
     stopGeneration();
     teardownDrag?.();
+    teardownViewport?.();
+    teardownViewport = null;
     resizeObserver?.disconnect();
     window.removeEventListener('resize', onWindowResize);
     panel?.remove();

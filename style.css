@@ -379,14 +379,24 @@
 /* ── Mobile: near-fullscreen sheet ──────────────────────────────────────── */
 
 @media (max-width: 800px) {
+    /* geometry.js keeps these in step with window.visualViewport, so the sheet
+       follows the keyboard instead of hiding the composer behind it. The dvh
+       fallbacks are what a browser without the API gets. */
     .btw-panel {
-        top: 44px !important;
+        --btw-vv-top: 0px;
+        --btw-vv-height: 100dvh;
+        --btw-sheet-inset: calc(56px + env(safe-area-inset-bottom, 0px));
+
+        top: calc(var(--btw-vv-top) + 44px) !important;
         right: auto !important;
         bottom: auto !important;
         left: 3vw !important;
         width: 94vw !important;
-        height: calc(100dvh - 56px - env(safe-area-inset-bottom, 0px)) !important;
-        max-height: calc(100dvh - 56px - env(safe-area-inset-bottom, 0px));
+        height: calc(var(--btw-vv-height) - var(--btw-sheet-inset)) !important;
+        max-height: calc(var(--btw-vv-height) - var(--btw-sheet-inset));
+        /* The desktop 220px floor would push the composer back under the
+           keyboard on a short viewport; the transcript absorbs the squeeze. */
+        min-height: 0;
     }
 
     .btw-header {
