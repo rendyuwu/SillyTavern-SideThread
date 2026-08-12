@@ -91,8 +91,8 @@ optional:
 - Lorebooks, in one of three modes:
   - **Activated entries only** (default) — runs SillyTavern's own World Info scanner in dry-run
     mode, so you see exactly what the story is currently using.
-  - **Every entry in every bound book** — character book, embedded card book, chat book, persona
-    book and the global selection, capped by a character budget you set.
+  - **Every entry in every bound book** — character book, chat book, persona book and the global
+    selection, capped by a character budget you set.
   - **None.**
 - Main chat history — the last N messages, the whole chat, or nothing. Hidden/system messages
   are excluded unless you opt in.
@@ -130,10 +130,15 @@ Two properties are what make the report worth trusting:
   unanswered too, so an abort cannot quietly shrink the denominator.
 - **Batches are small on purpose**, around two entries per request. Twenty entries in one request
   gets three of them read. More requests, closer reading.
-- **Duplicates are merged.** Many cards ship with a lorebook embedded in the card *and* the same
-  book saved as a standalone world file, so every entry would otherwise be audited twice and every
-  finding reported twice. Identical text is merged into one target, and the report names the other
-  place it lives — because fixing one copy and not the other leaves the two contradicting each other.
+- **Duplicates are merged.** If two of the books you tick hold the same entries — an old copy and a
+  v2, say — the identical text becomes one target, and the report names the other place it lives,
+  because fixing one copy and not the other leaves the two contradicting each other.
+
+Lore embedded inside a character card is **not** audited. SillyTavern never reads it either: "Import
+Card Lore" converts it into a normal lorebook file, and that file is what the story uses and what you
+edit. The copy inside the card stays frozen and unreachable, so a correction to it could not be
+applied anywhere. If a card is carrying embedded lore that was never imported, the audit says so
+instead of silently reviewing it.
 
 The audit loads the books itself, so the lore mode above does not constrain it: it has to see the
 entries that are *not* currently triggering, because a place nobody has mentioned in a year is both

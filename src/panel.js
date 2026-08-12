@@ -9,7 +9,7 @@ import { sendSideRequest, canStream, canAbort } from './llm.js';
 import { loadThread, saveThread, clearThread, threadForRequest, currentThreadId } from './thread.js';
 import { renderMarkdown, escapeHtml, extractCodeBlocks } from './markdown.js';
 import { listLorebooks, createLorebookEntry } from './lorebook.js';
-import { auditableBooks, batchTargets, buildStoryNow, collectAuditTargets, humanizeReport, runAudit } from './audit.js';
+import { auditableBooks, batchTargets, buildStoryNow, collectAuditTargets, humanizeReport, runAudit, unimportedCardLore } from './audit.js';
 
 const PANEL_ID = 'btw-panel';
 const GEOMETRY_KEY = 'btw_panel_geometry';
@@ -640,7 +640,7 @@ async function showAuditDialog() {
                 ? [...bound, ...rest].map(name => `<label class="btw-checkbox"><input type="checkbox" class="btw-audit-book" value="${escapeHtml(name)}"${bound.includes(name) ? ' checked' : ''}> ${escapeHtml(name)}${bound.includes(name) ? ' <span class="btw-hint">bound to this chat</span>' : ''}</label>`).join('')
                 : '<p class="btw-hint">No lorebooks found.</p>'}
         </div>
-        <label class="btw-checkbox"><input type="checkbox" id="btw-audit-card" checked> The character card <span class="btw-hint">description, personality, scenario — where a faded boundary usually hides — plus any lorebook embedded in the card itself</span></label>
+        <label class="btw-checkbox"><input type="checkbox" id="btw-audit-card" checked> Character card fields <span class="btw-hint">description, personality, scenario — where a faded boundary usually hides</span></label>
         <label class="btw-checkbox"><input type="checkbox" id="btw-audit-persona" checked> User persona description</label>
     `;
 
@@ -703,9 +703,6 @@ async function startAudit(scope) {
             books: scope.books || [],
             includeCard: scope.includeCard,
             includePersona: scope.includePersona,
-            // A card-embedded book has no row of its own in the dialog, so it follows
-            // the card: unticking everything must actually audit nothing.
-            includeEmbedded: scope.includeCard,
         });
         if (!targets.length) {
             toast('Nothing to audit: no enabled entries or card text in the selected scope.', 'info');
@@ -721,10 +718,14 @@ async function startAudit(scope) {
 
         // The story block is re-sent with every batch, so its size is the real bill.
         const duplicates = targets.reduce((total, target) => total + (target.alsoAt?.length || 0), 0);
+        const orphanLore = unimportedCardLore();
         pushAuditNote([
             `**Lore audit** — ${targets.length} target${targets.length === 1 ? '' : 's'}${duplicates ? ` (${duplicates} duplicate${duplicates === 1 ? '' : 's'} merged)` : ''} across ${batches.length} request${batches.length === 1 ? '' : 's'}, story context ${storyNow.length.toLocaleString()} chars each.`,
             lastAuditElapsed ? `In-story time elapsed: ${lastAuditElapsed}` : '*No elapsed time given — ages cannot be recomputed reliably.*',
-        ].join('\n\n'));
+            orphanLore
+                ? `*The card carries an embedded lorebook ("${orphanLore.name}", ${orphanLore.entries} entries) that is not bound to this chat. SillyTavern never reads embedded lore directly, so the story is not using it and it is not audited — use "Import Card Lore" on the character panel if it should be.*`
+                : '',
+        ].filter(Boolean).join('\n\n'));
 
         /** @type {import('./thread.js').ThreadMessage|null} */
         let current = null;

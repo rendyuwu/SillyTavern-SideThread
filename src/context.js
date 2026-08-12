@@ -232,8 +232,7 @@ async function buildFullLoreSections(settings) {
     if (typeof context.loadWorldInfo !== 'function') return [];
 
     const names = getBoundLorebookNames();
-    const embedded = await getEmbeddedCharacterBook();
-    if (!names.length && !embedded) return [];
+    if (!names.length) return [];
 
     /** @type {Section[]} */
     const sections = [];
@@ -266,8 +265,6 @@ async function buildFullLoreSections(settings) {
             debugLog(`loadWorldInfo("${name}") failed`, error);
         }
     }
-    if (embedded && budget > 0) renderBook(`${embedded.label} (embedded in card)`, embedded.book);
-
     if (truncated) {
         sections.push({
             title: 'LOREBOOK NOTICE',
@@ -278,23 +275,14 @@ async function buildFullLoreSections(settings) {
 }
 
 /**
- * Character cards can carry their own book inline (`data.character_book`) instead
- * of referencing a file.
- *
- * @returns {Promise<{label:string, book:any}|null>}
+ * A card can carry `data.character_book` inline, but SillyTavern never reads it at
+ * generation time: `getCharacterLore()` resolves only the *file name* in
+ * `data.extensions.world`, and "Import Card Lore" is what turns the embedded copy
+ * into such a file. So the embedded book is deliberately not a lore source here —
+ * once imported it would duplicate the bound file, and if it was never imported the
+ * roleplay is not using it either. `unimportedCardLore()` in audit.js surfaces that
+ * second case instead of quietly reading it.
  */
-async function getEmbeddedCharacterBook() {
-    const context = ctx();
-    const character = context.characters?.[context.characterId];
-    const raw = character?.data?.character_book;
-    if (!raw || typeof context.convertCharacterBook !== 'function') return null;
-    try {
-        return { label: trim(raw.name) || character.name || 'Card book', book: context.convertCharacterBook(raw) };
-    } catch (error) {
-        debugLog('convertCharacterBook failed', error);
-        return null;
-    }
-}
 
 /**
  * Only the entries SillyTavern would actually activate for the current chat tail.
@@ -430,4 +418,4 @@ export async function countTokens(text) {
     return { count: Math.ceil(text.length / 4), estimated: true };
 }
 
-export { getBoundLorebookNames, getEmbeddedCharacterBook };
+export { getBoundLorebookNames };

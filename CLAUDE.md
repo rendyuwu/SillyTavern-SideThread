@@ -91,9 +91,10 @@ Things worth knowing before touching it:
 - Lore mode `activated` calls `getWorldInfoPrompt(scanChat, maxContext, true)` — the trailing `true`
   is **dry-run**, so no `WORLD_INFO_ACTIVATED` events fire and sticky/cooldown state is untouched.
   The scanner wants newest-first plain strings.
-- Lore mode `full` walks every bound book (character, group members, chat, persona, the
-  `#world_info` multiselect for the global selection, plus the card-embedded `data.character_book`)
-  against a character budget, and emits a truncation notice when it runs out.
+- Lore mode `full` walks every bound book (character, group members, chat, persona, and the
+  `#world_info` multiselect for the global selection) against a character budget, and emits a
+  truncation notice when it runs out. The card-embedded `data.character_book` is **not** among them —
+  see the audit notes below for why reading it is always either redundant or misleading.
 - The global lorebook selection is *not* on the context object — it is read from the DOM.
 
 ### Backends (`llm.js`)
@@ -152,12 +153,18 @@ Four decisions hold it up:
   the settings hint says so.
 - **Batches are small on purpose** (`auditBatchChars`, default 7000 — about two entries). Twenty
   entries in one request gets three of them read.
-- **Identical targets are merged** by `dedupeTargets()`, before ids are assigned. A card ships with
-  an embedded `character_book`, the same book also exists as a standalone world file, and now every
-  entry is collected twice — one real install had 24 targets collapse to 14. The duplicate is not
-  dropped silently: its location lands in `alsoAt` and the report names it, because fixing one copy
-  and not the other leaves the card and the file contradicting each other. Near-identical copies are
-  deliberately left as separate targets — they are different texts and each needs its own verdict.
+- **Embedded card lore is not a source.** `data.character_book` is never read, by this extension or
+  by SillyTavern: `getCharacterLore()` resolves only the file name in `data.extensions.world`, and
+  "Import Card Lore" is what turns the embedded copy into such a file. So after an import the
+  embedded book duplicates the bound file, and without one the roleplay is not using it either —
+  either way, corrections to it could not be applied, since the copy inside the card is unreachable
+  from the UI. `unimportedCardLore()` reports that second case instead of quietly auditing it.
+- **Identical targets are merged** by `dedupeTargets()`, before ids are assigned, for the case that
+  remains: two world files holding the same entries (one install has `Guild RPG.json` and
+  `Guild RPG v2.json` sharing fourteen). The duplicate is not dropped silently — its location lands
+  in `alsoAt` and the report names it, because fixing one copy and not the other leaves the two
+  contradicting each other. Near-identical copies stay separate: they are different texts and each
+  needs its own verdict.
 - **`auditHistoryCount` caps the evidence separately** from the conversational history setting. The
   story block is re-sent with *every* batch, so `historyMode: 'all'` on a 1 MB chat would be paid
   for once per request. The running summary carries the older material.

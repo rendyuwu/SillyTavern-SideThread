@@ -16,7 +16,7 @@
  */
 
 import { debugLog } from './settings.js';
-import { buildContext, renderSections, getBoundLorebookNames, getEmbeddedCharacterBook } from './context.js';
+import { buildContext, renderSections, getBoundLorebookNames } from './context.js';
 import { sendSideRequest, canStream } from './llm.js';
 
 /**
@@ -95,10 +95,9 @@ function dedupeTargets(targets) {
  * @param {string[]} scope.books
  * @param {boolean} [scope.includeCard]
  * @param {boolean} [scope.includePersona]
- * @param {boolean} [scope.includeEmbedded]
  * @returns {Promise<AuditTarget[]>}
  */
-export async function collectAuditTargets({ books, includeCard = true, includePersona = true, includeEmbedded = true }) {
+export async function collectAuditTargets({ books, includeCard = true, includePersona = true }) {
     const context = ctx();
     /** @type {any[]} */
     const targets = [];
@@ -137,11 +136,6 @@ export async function collectAuditTargets({ books, includeCard = true, includePe
                 debugLog(`audit: loadWorldInfo("${name}") failed`, error);
             }
         }
-    }
-
-    if (includeEmbedded) {
-        const embedded = await getEmbeddedCharacterBook();
-        if (embedded) pushBook(`${embedded.label} (embedded in the card)`, embedded.book);
     }
 
     if (includeCard) {
@@ -445,4 +439,32 @@ export async function runAudit({ settings, batches, storyNow, elapsed = '', sign
  */
 export function auditableBooks() {
     return getBoundLorebookNames();
+}
+
+/**
+ * Embedded card lore that was never imported.
+ *
+ * The audit deliberately does not read `data.character_book`: SillyTavern never
+ * scans it either — `getCharacterLore()` resolves only the file name in
+ * `data.extensions.world`, and "Import Card Lore" is what converts the embedded
+ * copy into such a file. Auditing it would produce corrections the author cannot
+ * apply, because the copy inside the card is unreachable from the UI.
+ *
+ * But "not audited" and "not there" are different things, so say when a card is
+ * carrying lore the story is not using. Matched by the name ST's own importer would
+ * give it; a book imported under a different name reads as unimported here, which
+ * is why the wording stays about binding rather than about existence.
+ *
+ * @returns {{name: string, entries: number}|null}
+ */
+export function unimportedCardLore() {
+    const context = ctx();
+    const character = context.characters?.[context.characterId];
+    const book = character?.data?.character_book;
+    if (!book) return null;
+
+    const name = trim(book.name) || `${trim(character.name)}'s Lorebook`;
+    if (getBoundLorebookNames().includes(name)) return null;
+
+    return { name, entries: Array.isArray(book.entries) ? book.entries.length : 0 };
 }
