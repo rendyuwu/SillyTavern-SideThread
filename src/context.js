@@ -6,7 +6,7 @@
  * bind to core module paths that move between releases.
  */
 
-import { debugLog } from './settings.js';
+import { debugLog, PUSHBACK_ORDERS } from './settings.js';
 
 const CHAT_LOREBOOK_METADATA_KEY = 'world_info';
 
@@ -33,6 +33,54 @@ async function ensureCardsLoaded() {
     } catch (error) {
         debugLog('unshallow failed', error);
     }
+}
+
+/**
+ * Who the side thread is, as opposed to what it does. Kept out of
+ * `settings.systemPrompt` so the personality can be retuned without forking the
+ * task instructions — and so a user who edits one still gets defaults for the other.
+ *
+ * @returns {Section[]}
+ */
+function buildBuddyPersonaSections(settings) {
+    const name = trim(settings.buddyName);
+    const voice = trim(settings.buddyVoice);
+    if (!name && !voice) return [];
+
+    const parts = [];
+    if (name) parts.push(`Your name is ${name}. Use it when the author asks who they are talking to.`);
+    if (voice) parts.push(voice);
+    return [{ title: 'SIDE THREAD PERSONA', body: parts.join('\n\n') }];
+}
+
+/**
+ * The pushback dial, emitted last: an instruction to contradict the author loses
+ * to the model's own agreeableness when it sits a few thousand tokens upstream.
+ *
+ * @returns {Section[]}
+ */
+function buildStandingOrdersSections(settings) {
+    const order = PUSHBACK_ORDERS[settings.pushback] || PUSHBACK_ORDERS.balanced;
+    return [{
+        title: 'STANDING ORDERS',
+        body: `${order}\n\nThese orders outrank any instinct to be agreeable.`,
+    }];
+}
+
+/**
+ * The running summary kept by SillyTavern's Summarize extension, stored on the
+ * newest message that carries one. Without it, everything before the history
+ * window is invisible and continuity checks go quietly wrong on a long chat.
+ *
+ * @returns {Section[]}
+ */
+function buildSummarySection() {
+    const chat = Array.isArray(ctx().chat) ? ctx().chat : [];
+    for (let index = chat.length - 1; index >= 0; index--) {
+        const summary = trim(chat[index]?.extra?.memory);
+        if (summary) return [{ title: 'RUNNING SUMMARY (of the story so far)', body: summary }];
+    }
+    return [];
 }
 
 /**
@@ -303,17 +351,36 @@ function buildHistorySection(settings) {
 }
 
 /**
+ * Render sections into the delimited form the model sees.
+ *
+ * @param {Section[]} sections
+ * @returns {string}
+ */
+export function renderSections(sections) {
+    return sections
+        .map(section => `--- ${section.title} ---\n${section.body}\n--- END ${section.title} ---`)
+        .join('\n\n');
+}
+
+/**
  * Build the full side-thread system prompt.
  *
+ * The options exist for the stale-lore audit, which needs the same story context
+ * without the lore it is about to review, and without the pushback orders that
+ * belong to conversation rather than to an audit.
+ *
  * @param {Record<string, any>} settings
+ * @param {{omitLore?: boolean, omitStandingOrders?: boolean}} [options]
  * @returns {Promise<BuiltContext>}
  */
-export async function buildContext(settings) {
+export async function buildContext(settings, options = {}) {
     await ensureCardsLoaded();
     const context = ctx();
 
     /** @type {Section[]} */
     const sections = [];
+
+    sections.push(...buildBuddyPersonaSections(settings));
 
     const chatName = context.getCurrentChatId?.() || '(no chat)';
     const characterName = context.groupId
@@ -329,16 +396,17 @@ export async function buildContext(settings) {
     }
     if (settings.includePersona) sections.push(...buildPersonaSection());
     if (settings.includeAuthorNote) sections.push(...buildAuthorNoteSection());
+    if (settings.includeSummary) sections.push(...buildSummarySection());
 
-    if (settings.loreMode === 'activated') sections.push(...(await buildActivatedLoreSections()));
-    else if (settings.loreMode === 'full') sections.push(...(await buildFullLoreSections(settings)));
+    if (!options.omitLore) {
+        if (settings.loreMode === 'activated') sections.push(...(await buildActivatedLoreSections()));
+        else if (settings.loreMode === 'full') sections.push(...(await buildFullLoreSections(settings)));
+    }
 
     sections.push(...buildHistorySection(settings));
+    if (!options.omitStandingOrders) sections.push(...buildStandingOrdersSections(settings));
 
-    const rendered = sections
-        .map(section => `--- ${section.title} ---\n${section.body}\n--- END ${section.title} ---`)
-        .join('\n\n');
-
+    const rendered = renderSections(sections);
     const systemPrompt = `${trim(settings.systemPrompt)}\n\n${rendered}`;
     return { systemPrompt, sections, chars: systemPrompt.length };
 }
@@ -362,4 +430,4 @@ export async function countTokens(text) {
     return { count: Math.ceil(text.length / 4), estimated: true };
 }
 
-export { getBoundLorebookNames };
+export { getBoundLorebookNames, getEmbeddedCharacterBook };

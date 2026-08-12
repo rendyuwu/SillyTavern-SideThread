@@ -14,7 +14,16 @@ const MAX_CHATS = 24;
 const MAX_MESSAGES_PER_CHAT = 240;
 const MAX_STORE_CHARS = 1_500_000;
 
-/** @typedef {{role:'user'|'assistant', content:string, ts:number, error?:boolean}} ThreadMessage */
+/**
+ * `meta` marks a message that belongs to the transcript but not to the
+ * conversation: an audit report is worth keeping and re-reading, but a multi-batch
+ * report would ride along with every later question and crowd out the story.
+ *
+ * `audit.missedIds` lets an audit summary re-offer the targets the model never
+ * ruled on. Only the ids are stored; the target texts stay in memory.
+ *
+ * @typedef {{role:'user'|'assistant', content:string, ts:number, error?:boolean, meta?:boolean, audit?:{missedIds:string[], runId:number}}} ThreadMessage
+ */
 
 /** @returns {string} */
 export function currentThreadId() {
@@ -91,7 +100,7 @@ export function clearThread(threadId = currentThreadId()) {
 export function threadForRequest(messages, turns) {
     const limit = Math.max(1, Number(turns) || 12) * 2;
     return messages
-        .filter(message => !message.error && typeof message.content === 'string' && message.content.trim())
+        .filter(message => !message.error && !message.meta && typeof message.content === 'string' && message.content.trim())
         .slice(-limit)
         .map(({ role, content }) => ({ role, content }));
 }

@@ -147,6 +147,12 @@
     border-left: 3px solid #d9534f;
 }
 
+/* Audit reports: part of the transcript, but not part of the conversation. */
+.btw-message-meta {
+    border-left: 3px solid var(--SmartThemeQuoteColor, #6c9ad2);
+    opacity: 0.94;
+}
+
 .btw-message-body > *:first-child {
     margin-top: 0;
 }
@@ -204,6 +210,60 @@
     padding: 0;
     white-space: pre;
     background: transparent;
+}
+
+/* The wrapper exists so the copy button and the OLD/NEW badge do not live inside
+   the scrolling <pre> and slide away with the content. */
+.btw-code-wrap {
+    position: relative;
+}
+
+.btw-code-wrap[data-lang] pre.btw-code {
+    padding-top: 24px;
+    border-left-width: 3px;
+}
+
+.btw-code-wrap[data-lang="old"] pre.btw-code {
+    border-left-color: var(--crimson70a, rgba(220, 70, 70, 0.7));
+    background-color: rgba(190, 60, 60, 0.14);
+}
+
+.btw-code-wrap[data-lang="new"] pre.btw-code {
+    border-left-color: rgba(80, 190, 110, 0.7);
+    background-color: rgba(70, 180, 100, 0.14);
+}
+
+.btw-code-badge {
+    position: absolute;
+    top: 8px;
+    left: 11px;
+    font-size: 0.66em;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    opacity: 0.65;
+    pointer-events: none;
+}
+
+.btw-code-copy {
+    position: absolute;
+    top: 7px;
+    right: 7px;
+    opacity: 0;
+    transition: opacity 0.12s ease-in-out;
+}
+
+.btw-code-wrap:hover .btw-code-copy,
+.btw-code-copy:focus-visible {
+    opacity: 1;
+}
+
+/* No hover on a touch screen: pin the button open with a real touch target. */
+@media (hover: none) {
+    .btw-code-copy {
+        width: 32px;
+        height: 32px;
+        opacity: 1;
+    }
 }
 
 .btw-typing {
@@ -488,6 +548,21 @@
     flex-direction: row;
     align-items: center;
     gap: 6px;
+}
+
+.btw-audit-books {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 220px;
+    overflow-y: auto;
+    padding: 8px;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.15));
+    border-radius: 6px;
+}
+
+.btw-audit-actions {
+    opacity: 1;
 }
 
 .btw-entry-form textarea {

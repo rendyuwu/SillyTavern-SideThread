@@ -58,7 +58,11 @@
 
             <label for="btw-preset">Completion preset override</label>
             <select id="btw-preset" class="text_pole"></select>
-            <small class="btw-hint">Applied to connection-profile requests only.</small>
+            <small class="btw-hint">
+                Applied to connection-profile requests only — and in that mode it is the only way to give
+                the side thread its own sampler settings. Point it at a preset with some temperature
+                (around 0.8) so a deterministic roleplay preset does not flatten the personality.
+            </small>
 
             <div class="btw-settings-grid">
                 <div>
@@ -104,16 +108,86 @@
             <label class="checkbox_label" for="btw-include-first-message"><input id="btw-include-first-message" type="checkbox"><span>First message / greeting</span></label>
             <label class="checkbox_label" for="btw-include-persona"><input id="btw-include-persona" type="checkbox"><span>User persona description</span></label>
             <label class="checkbox_label" for="btw-include-author-note"><input id="btw-include-author-note" type="checkbox"><span>Author's note</span></label>
+            <label class="checkbox_label" for="btw-include-summary"><input id="btw-include-summary" type="checkbox"><span>Running summary <small>(from the Summarize extension — covers what falls outside the history window)</small></span></label>
             <label class="checkbox_label" for="btw-include-hidden"><input id="btw-include-hidden" type="checkbox"><span>Hidden / system messages from the chat</span></label>
 
             <label for="btw-side-thread-turns">Side-thread turns kept in the request</label>
             <input id="btw-side-thread-turns" class="text_pole" type="number" min="1" max="100" step="1">
 
             <hr>
+            <h4>Your writing partner</h4>
+            <small class="btw-hint">
+                Who the side thread is, as opposed to what it does. Kept separate from the system prompt
+                below, so you can retune the personality without losing later improvements to the
+                instructions — and the other way round.
+            </small>
+
+            <label for="btw-buddy-name">Name</label>
+            <input id="btw-buddy-name" class="text_pole" type="text" placeholder="Rook">
+
+            <label for="btw-pushback">How hard it pushes back</label>
+            <select id="btw-pushback" class="text_pole">
+                <option value="gentle">Gentle — leads with what works, raises problems as questions</option>
+                <option value="balanced">Balanced — says what it thinks first, then helps</option>
+                <option value="blunt">Blunt — attacks the premise before helping build on it</option>
+            </select>
+            <small class="btw-hint">
+                A small model will agree with you anyway, however this is set. If the pushback never
+                comes, the lever is the model or the preset, not this dropdown.
+            </small>
+
+            <label for="btw-buddy-voice">Voice and temperament</label>
+            <textarea id="btw-buddy-voice" class="text_pole" rows="8"></textarea>
+            <input id="btw-buddy-voice-reset" class="menu_button" type="button" value="Restore default voice">
+
+            <hr>
             <h4>Instructions</h4>
+            <small class="btw-hint">What the side thread is for and how it formats deliverables. The personality lives in the section above.</small>
             <label for="btw-system-prompt">System prompt</label>
             <textarea id="btw-system-prompt" class="text_pole" rows="10"></textarea>
             <input id="btw-system-prompt-reset" class="menu_button" type="button" value="Restore default prompt">
+
+            <hr>
+            <h4>Stale lore audit</h4>
+            <small class="btw-hint">
+                The clock icon in the panel header reviews your lorebook entries, card fields and persona
+                against what the story has become, and reports verbatim old → new spans to paste by hand.
+                It loads the books directly, so the lore mode above does not limit it — an audit has to see
+                the entries that are <em>not</em> currently triggering.
+            </small>
+
+            <div class="btw-settings-grid">
+                <div>
+                    <label for="btw-audit-batch-chars">Characters per request</label>
+                    <input id="btw-audit-batch-chars" class="text_pole" type="number" min="1500" max="60000" step="500">
+                </div>
+                <div>
+                    <label for="btw-audit-max-tokens">Max response length</label>
+                    <input id="btw-audit-max-tokens" class="text_pole" type="number" min="512" max="32000" step="256">
+                </div>
+                <div>
+                    <label for="btw-audit-history-count">Messages of evidence <small>(0 = same as above)</small></label>
+                    <input id="btw-audit-history-count" class="text_pole" type="number" min="0" max="2000" step="10">
+                </div>
+            </div>
+            <small class="btw-hint">
+                The story context is re-sent with <em>every</em> batch, so this is capped separately from the
+                chat history above: "entire chat" would be paid for once per request. The running summary
+                carries what falls outside the window — keep the Summarize extension on for a long chat.
+            </small>
+            <small class="btw-hint">
+                Smaller batches mean more requests but closer reading: a model given twenty entries at once
+                answers about three of them. Coverage is checked either way — anything it fails to rule on
+                is reported as unanswered, never as clean.
+            </small>
+
+            <label for="btw-audit-prompt">Audit instructions</label>
+            <textarea id="btw-audit-prompt" class="text_pole" rows="8"></textarea>
+            <input id="btw-audit-prompt-reset" class="menu_button" type="button" value="Restore default audit instructions">
+            <small class="btw-hint">
+                The <code>OK:</code> line and the <code>#### E&lt;n&gt;</code> headings are how coverage is
+                counted. Change that part of the format and the audit can no longer tell you what it missed.
+            </small>
 
             <hr>
             <h4>Panel</h4>

@@ -2,7 +2,7 @@
  * Binds the extension settings drawer.
  */
 
-import { getSettings, saveSettings, DEFAULT_SYSTEM_PROMPT, LOG_PREFIX } from './settings.js';
+import { getSettings, saveSettings, DEFAULT_SYSTEM_PROMPT, DEFAULT_BUDDY_VOICE, DEFAULT_AUDIT_PROMPT, LOG_PREFIX } from './settings.js';
 import { fetchOllamaModels, fetchOpenAIModels } from './llm.js';
 import { openPanel, onSettingsChanged } from './panel.js';
 
@@ -219,10 +219,18 @@ export function bindSettingsUi(root) {
     bindField(root, '#btw-include-first-message', 'includeFirstMessage');
     bindField(root, '#btw-include-persona', 'includePersona');
     bindField(root, '#btw-include-author-note', 'includeAuthorNote');
+    bindField(root, '#btw-include-summary', 'includeSummary');
     bindField(root, '#btw-include-hidden', 'includeHiddenMessages');
     bindField(root, '#btw-side-thread-turns', 'sideThreadTurns');
 
+    bindField(root, '#btw-buddy-name', 'buddyName');
+    bindField(root, '#btw-buddy-voice', 'buddyVoice');
+    bindField(root, '#btw-pushback', 'pushback');
     bindField(root, '#btw-system-prompt', 'systemPrompt');
+    bindField(root, '#btw-audit-prompt', 'auditPrompt');
+    bindField(root, '#btw-audit-batch-chars', 'auditBatchChars');
+    bindField(root, '#btw-audit-max-tokens', 'auditMaxTokens');
+    bindField(root, '#btw-audit-history-count', 'auditHistoryCount');
     bindField(root, '#btw-font-size', 'fontSize');
     bindField(root, '#btw-persist-threads', 'persistThreads');
     bindField(root, '#btw-debug', 'debug');
@@ -234,12 +242,28 @@ export function bindSettingsUi(root) {
 
     root.querySelector('#btw-open-panel')?.addEventListener('click', () => openPanel());
 
+    root.querySelector('#btw-buddy-voice-reset')?.addEventListener('click', () => {
+        getSettings().buddyVoice = DEFAULT_BUDDY_VOICE;
+        saveSettings();
+        const textarea = root.querySelector('#btw-buddy-voice');
+        if (textarea instanceof HTMLTextAreaElement) textarea.value = DEFAULT_BUDDY_VOICE;
+        toast('Default voice restored.', 'success');
+    });
+
     root.querySelector('#btw-system-prompt-reset')?.addEventListener('click', () => {
         getSettings().systemPrompt = DEFAULT_SYSTEM_PROMPT;
         saveSettings();
         const textarea = root.querySelector('#btw-system-prompt');
         if (textarea instanceof HTMLTextAreaElement) textarea.value = DEFAULT_SYSTEM_PROMPT;
         toast('Default system prompt restored.', 'success');
+    });
+
+    root.querySelector('#btw-audit-prompt-reset')?.addEventListener('click', () => {
+        getSettings().auditPrompt = DEFAULT_AUDIT_PROMPT;
+        saveSettings();
+        const textarea = root.querySelector('#btw-audit-prompt');
+        if (textarea instanceof HTMLTextAreaElement) textarea.value = DEFAULT_AUDIT_PROMPT;
+        toast('Default audit instructions restored.', 'success');
     });
 
     root.querySelector('#btw-reset-geometry')?.addEventListener('click', () => {

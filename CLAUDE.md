@@ -38,7 +38,7 @@ Modules under `src/`, roughly in data-flow order:
 
 | Module | Responsibility |
 | --- | --- |
-| `settings.js` | `DEFAULTS` + `DEFAULT_SYSTEM_PROMPT`, `getSettings()`, `saveSettings()`, `debugLog()` |
+| `settings.js` | `DEFAULTS`, `DEFAULT_SYSTEM_PROMPT`, `DEFAULT_BUDDY_VOICE`, `DEFAULT_AUDIT_PROMPT`, `PUSHBACK_ORDERS`, `getSettings()`, `saveSettings()`, `debugLog()` |
 | `context.js` | Assembles the system prompt from live ST state; `buildContext()`, `countTokens()` |
 | `thread.js` | Per-chat transcripts in localStorage; `threadForRequest()` window |
 | `llm.js` | `sendSideRequest()` dispatch across four backends; `canStream()` / `canAbort()` |
@@ -46,6 +46,7 @@ Modules under `src/`, roughly in data-flow order:
 | `geometry.js` | Drag, corner resize, viewport-clamped geometry persistence |
 | `markdown.js` | Deliberately minimal markdown → safe HTML; `extractCodeBlocks()` |
 | `lorebook.js` | Writes an answer back out as a World Info entry |
+| `audit.js` | Stale-lore audit: batches reference material, proves coverage; read-only |
 | `settings-ui.js` | Binds `settings.html` to the settings store |
 
 ### Everything goes through `SillyTavern.getContext()`
@@ -72,9 +73,19 @@ chat file, or ST's own prompt builder. Do not move them into `chatMetadata`.
 `sections` array is what the eye-icon preview tabulates, so any new context source should be a
 `Section` rather than string concatenation.
 
+Section order is load-bearing at both ends. `SIDE THREAD PERSONA` (name + `buddyVoice`) comes first,
+so the partner's identity sits directly under the task instructions. `STANDING ORDERS` (the
+`pushback` dial, via `PUSHBACK_ORDERS`) comes **last**: an instruction to contradict the author loses
+to the model's own agreeableness when it sits thousands of tokens upstream of the question. The
+personality is deliberately three small settings rather than prose inside `systemPrompt`, so editing
+one does not freeze the other at its old default (see invariant 3).
+
 Things worth knowing before touching it:
 
 - `ensureCardsLoaded()` first — cards are "shallow" (metadata only) right after a page load.
+- `buildSummarySection()` reads the Summarize extension's running summary off the newest message
+  carrying `extra.memory`. Without it everything before the history window is invisible, and
+  continuity checks fail quietly rather than loudly on a long chat.
 - Solo chats use `getCharacterCardFields()` so chat-level overrides and macros resolve; group chats
   read raw member cards and stay deliberately terser (eight full cards drown everything else).
 - Lore mode `activated` calls `getWorldInfoPrompt(scanChat, maxContext, true)` — the trailing `true`
@@ -122,6 +133,47 @@ target book and only falls back to `FALLBACK_ENTRY` for empty books. A keyword e
 would never fire, so it is saved `disable: true` and the toast says why. Naming an unknown book
 creates it (`saveWorldInfo` + `updateWorldInfoList`).
 
+### Stale-lore audit (`audit.js`)
+
+A long roleplay outgrows its own reference material. The audit reviews lorebook entries, raw card
+fields and the persona description against the story as it now stands, and reports **verbatim
+old → new spans** the author pastes over by hand. Read-only: nothing here writes World Info.
+
+Four decisions hold it up:
+
+- **It ignores `settings.loreMode`** and calls `loadWorldInfo()` directly. An audit has to see the
+  entries that are *not* currently triggering — a location abandoned a year ago is both the least
+  likely to fire and the most likely to be wrong.
+- **Coverage is proved, not assumed.** Targets are handed over as `E1`, `E2`, … and the model must
+  account for every one via the `OK:` line or an `#### E<n>` heading. `parseCoverage()` reads both
+  back and reports whatever went unanswered. Without this, "no findings" and "never examined" look
+  identical, which is the failure mode that makes an audit worthless. A heading beats an `OK`
+  listing for the same id. Changing that output format in `auditPrompt` breaks coverage counting —
+  the settings hint says so.
+- **Batches are small on purpose** (`auditBatchChars`, default 7000 — about two entries). Twenty
+  entries in one request gets three of them read.
+- **`auditHistoryCount` caps the evidence separately** from the conversational history setting. The
+  story block is re-sent with *every* batch, so `historyMode: 'all'` on a 1 MB chat would be paid
+  for once per request. The running summary carries the older material.
+
+Card targets use the **raw** `character.description` / `.personality` / `.scenario`, not
+`getCharacterCardFields()`: the author pastes the replacement into the card editor, so the audit has
+to quote what is actually stored there rather than the macro-resolved view.
+
+Reports land in the transcript as `meta` messages — kept and re-readable, but excluded from
+`threadForRequest()` so a multi-batch report does not ride along with every later question.
+
+The "unanswered targets" button resolves ids through an in-memory index, so it disappears after a
+reload; only the ids are persisted, never the target texts. Because ids are positional they collide
+across runs, so each run carries a token (`auditRunId`) and a stored summary offers its button only
+while that token is current; `onChatChanged()` bumps it and empties the index, since a summary
+persisted under another chat must never resolve against this one's entries.
+
+Stopping an audit is a coverage event, not just an early exit: a streaming connection profile
+resolves with partial text instead of throwing (`llm.js` `sendViaProfile`), so `runAudit()` reaches
+its own loop guard normally. It pushes every unread batch into `missed` and returns `stopped: true`,
+and the panel says "Audit stopped". Never let an abort quietly shrink the denominator.
+
 ### Panel geometry (`geometry.js`)
 
 Pointer-capture drag on the header, two corner resizers. Saved geometry is clamped on every apply so
@@ -150,5 +202,5 @@ Break these and the extension stops being what it is:
 
 1. Nothing from the side thread is written to `chat`, `chatMetadata`, or the main generation prompt.
 2. Reading context must not mutate main-chat state — hence dry-run World Info scanning.
-3. The user's edited `systemPrompt` is never overwritten by a new default; **Restore default prompt**
-   is the only path that replaces it.
+3. The user's edited `systemPrompt` and `buddyVoice` are never overwritten by a new default; the
+   matching **Restore default…** button is the only path that replaces either one.

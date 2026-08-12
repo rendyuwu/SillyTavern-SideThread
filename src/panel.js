@@ -9,6 +9,7 @@ import { sendSideRequest, canStream, canAbort } from './llm.js';
 import { loadThread, saveThread, clearThread, threadForRequest, currentThreadId } from './thread.js';
 import { renderMarkdown, escapeHtml, extractCodeBlocks } from './markdown.js';
 import { listLorebooks, createLorebookEntry } from './lorebook.js';
+import { auditableBooks, batchTargets, buildStoryNow, collectAuditTargets, runAudit } from './audit.js';
 
 const PANEL_ID = 'btw-panel';
 const GEOMETRY_KEY = 'btw_panel_geometry';
@@ -18,8 +19,12 @@ const COLLAPSED_KEY = 'btw_panel_collapsed';
 const QUICK_PROMPTS = [
     { label: 'Lore check', text: 'Based on everything established so far, walk me through the lore of this world. Flag anything contradictory or unresolved.' },
     { label: 'Who is…', text: 'Summarise what we know about this character so far, including what is only implied: ' },
-    { label: 'New NPC', text: 'Design a new NPC who fits this world and could plausibly enter the story now. Give name, role, appearance, voice, motivation, secret, and a hook for meeting them. Then draft a lorebook entry for them in a fenced block.' },
+    { label: 'New NPC', text: 'Design a new NPC who fits this world and could plausibly enter the story now. Give name, role, appearance, voice, what they want, what they are hiding, and how the cast could meet them. Then draft a lorebook entry for them.' },
     { label: "What's next", text: 'Given the current scene, suggest three ways this could develop next, each with a different tone, and what each would cost the characters.' },
+    { label: 'Push back', text: 'Here is what I am planning to do next in the story. Tell me honestly where it is weak, what it would cost, and what you would do instead:\n\n' },
+    { label: 'Complication', text: 'Suggest three complications that could land on the current scene: one growing out of a choice the cast already made, one from the world reacting to what they did, and one nobody in the story could have planned for. Say what each would cost.' },
+    { label: 'Lorebook draft', text: 'Turn what we worked out in this side thread into a lorebook entry, ready to save as-is.' },
+    { label: 'Continuity', text: 'Go through the context for continuity problems: contradictions, facts that changed without explanation, setups that were dropped, and characters who have stopped wanting anything. Worst first.' },
 ];
 
 /** @type {HTMLElement|null} */
@@ -35,6 +40,21 @@ let teardownViewport = null;
 /** @type {ResizeObserver|null} */
 let resizeObserver = null;
 let busy = false;
+/**
+ * Audit targets from the most recent collection, so the "unanswered targets"
+ * button can re-send them. Only ids are persisted with the transcript — the full
+ * texts would bloat localStorage — so the button disappears after a page reload.
+ *
+ * Ids are positional (`E1`, `E2`, …) and therefore collide across runs, so each
+ * run gets a token and a stored summary only offers its button while that token is
+ * still current. Changing chat invalidates everything: a persisted summary from
+ * another chat must never resolve against this chat's targets.
+ *
+ * @type {Map<string, import('./audit.js').AuditTarget>}
+ */
+let auditTargetIndex = new Map();
+let auditRunId = 0;
+let lastAuditElapsed = '';
 
 /** @returns {any} */
 function ctx() {
@@ -59,6 +79,7 @@ function panelHtml() {
                 <span class="btw-context-label" id="btw-context-label"></span>
             </div>
             <div class="btw-header-right">
+                <button type="button" class="btw-icon-btn" id="btw-audit-btn" title="Audit the lore for what the story has outgrown"><i class="fa-solid fa-clock-rotate-left"></i></button>
                 <button type="button" class="btw-icon-btn" id="btw-preview-btn" title="Preview the context that will be sent"><i class="fa-solid fa-eye"></i></button>
                 <button type="button" class="btw-icon-btn" id="btw-clear-btn" title="Clear this side thread"><i class="fa-solid fa-trash-can"></i></button>
                 <button type="button" class="btw-icon-btn" id="btw-collapse-btn" title="Collapse" aria-expanded="true"><i class="fa-solid fa-chevron-up"></i></button>
@@ -105,6 +126,7 @@ function createPanel() {
     element.querySelector('#btw-collapse-btn')?.addEventListener('click', toggleCollapse);
     element.querySelector('#btw-clear-btn')?.addEventListener('click', onClearClick);
     element.querySelector('#btw-preview-btn')?.addEventListener('click', showContextPreview);
+    element.querySelector('#btw-audit-btn')?.addEventListener('click', () => showAuditDialog());
     element.querySelector('#btw-send-btn')?.addEventListener('click', onComposerAction);
 
     const input = /** @type {HTMLTextAreaElement} */ (element.querySelector('#btw-input'));
@@ -152,7 +174,10 @@ function renderChips() {
         chip.addEventListener('click', () => {
             const input = /** @type {HTMLTextAreaElement|null} */ (panel?.querySelector('#btw-input'));
             if (!input) return;
-            input.value = prompt.text;
+            // A chip frames what the author is already typing rather than replacing it:
+            // half a question in the box used to be wiped by one stray click.
+            const existing = input.value.trim();
+            input.value = existing ? `${prompt.text.trim()}\n\n${existing}` : prompt.text;
             input.focus();
             input.setSelectionRange(input.value.length, input.value.length);
             autoGrowInput();
@@ -237,11 +262,12 @@ function renderTranscript() {
     if (!(transcript instanceof HTMLElement)) return;
 
     if (!messages.length) {
+        const name = String(getSettings().buddyName || '').trim();
         transcript.innerHTML = `
             <div class="btw-empty">
-                <p><strong>Out-of-character side thread.</strong></p>
-                <p>This conversation is invisible to the roleplay. It carries the active character card, the persona, the lorebooks and the chat history, so you can talk about the story instead of inside it.</p>
-                <p>Nothing here is ever sent to the main chat.</p>
+                <p><strong>${name ? `${escapeHtml(name)} is listening` : 'Out-of-character side thread'} — off the record.</strong></p>
+                <p>This conversation is invisible to the roleplay. It carries the active character card, the persona, the lorebooks and the chat history, so you can argue about the story instead of writing inside it.</p>
+                <p>Ask for an NPC, poke at the plot, or float an idea you are not sure about. Nothing here is ever sent to the main chat.</p>
             </div>`;
         return;
     }
@@ -258,7 +284,7 @@ function renderTranscript() {
  */
 function renderMessage(message, index) {
     const wrapper = document.createElement('div');
-    wrapper.className = `btw-message btw-message-${message.role}${message.error ? ' btw-message-error' : ''}`;
+    wrapper.className = `btw-message btw-message-${message.role}${message.error ? ' btw-message-error' : ''}${message.meta ? ' btw-message-meta' : ''}`;
     wrapper.dataset.index = String(index);
 
     const body = document.createElement('div');
@@ -267,15 +293,88 @@ function renderMessage(message, index) {
         body.innerHTML = `<p>${escapeHtml(message.content).replace(/\n/g, '<br>')}</p>`;
     } else if (message.content) {
         body.innerHTML = renderMarkdown(message.content);
+        decorateCodeBlocks(body);
     } else {
         body.innerHTML = '<span class="btw-typing" aria-label="Waiting for the reply">●●●</span>';
     }
     wrapper.appendChild(body);
 
-    if (message.role === 'assistant' && !message.error && message.content) {
+    const missed = message.audit?.runId === auditRunId && Array.isArray(message.audit.missedIds)
+        ? message.audit.missedIds.map(id => auditTargetIndex.get(id)).filter(Boolean)
+        : [];
+    if (missed.length) {
+        wrapper.appendChild(renderAuditRetry(/** @type {import('./audit.js').AuditTarget[]} */ (missed)));
+    } else if (message.role === 'assistant' && !message.error && !message.meta && message.content) {
         wrapper.appendChild(renderMessageActions(message, index));
     }
     return wrapper;
+}
+
+/**
+ * A copy button per fenced block, and an OLD/NEW badge on audit diffs. The audit
+ * workflow is replace-by-hand, so the replacement has to be one click away; the
+ * badge comes free because renderMarkdown already forwards the fence language to
+ * `data-lang`.
+ *
+ * The button lives in a wrapper rather than inside the `<pre>`: the `<pre>` scrolls,
+ * and anything positioned inside it would scroll away with the content.
+ *
+ * @param {HTMLElement} container
+ */
+function decorateCodeBlocks(container) {
+    for (const element of container.querySelectorAll('pre.btw-code')) {
+        if (!(element instanceof HTMLElement) || element.parentElement?.classList.contains('btw-code-wrap')) continue;
+
+        const language = element.dataset.lang || '';
+        const diff = language === 'old' || language === 'new';
+
+        const wrap = document.createElement('div');
+        wrap.className = 'btw-code-wrap';
+        if (diff) wrap.dataset.lang = language;
+        element.replaceWith(wrap);
+        wrap.appendChild(element);
+
+        if (diff) {
+            const badge = document.createElement('span');
+            badge.className = 'btw-code-badge';
+            badge.textContent = language.toUpperCase();
+            wrap.appendChild(badge);
+        }
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btw-icon-btn btw-code-copy';
+        button.title = language === 'new' ? 'Copy the replacement' : 'Copy';
+        button.innerHTML = '<i class="fa-solid fa-copy"></i>';
+        button.addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(element.querySelector('code')?.textContent || '');
+                toast(language === 'new' ? 'Replacement copied.' : 'Copied.', 'success');
+            } catch {
+                toast('Clipboard blocked by the browser.', 'warning');
+            }
+        });
+        wrap.appendChild(button);
+    }
+}
+
+/**
+ * @param {import('./audit.js').AuditTarget[]} targets
+ * @returns {HTMLElement}
+ */
+function renderAuditRetry(targets) {
+    // Not a hover-reveal row: an unanswered-coverage warning has to stay visible.
+    const actions = document.createElement('div');
+    actions.className = 'btw-message-actions btw-audit-actions';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'menu_button btw-audit-retry';
+    button.textContent = `Audit the ${targets.length} unanswered target${targets.length === 1 ? '' : 's'}`;
+    button.addEventListener('click', () => {
+        startAudit({ targets, elapsed: lastAuditElapsed }).catch(error => console.error(LOG_PREFIX, error));
+    });
+    actions.appendChild(button);
+    return actions;
 }
 
 /**
@@ -488,6 +587,7 @@ function updateMessageBody(index, content) {
     if (!(wrapper instanceof HTMLElement)) return;
     const pinned = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 48;
     wrapper.innerHTML = renderMarkdown(content);
+    decorateCodeBlocks(wrapper);
     if (pinned) scrollToBottom();
 }
 
@@ -508,6 +608,179 @@ async function regenerateFrom(index) {
     renderTranscript();
     persist();
     await ask(question.content);
+}
+
+// ── Stale-lore audit ────────────────────────────────────────────────────────
+
+async function showAuditDialog() {
+    if (busy) {
+        toast('The side thread is still working.', 'warning');
+        return;
+    }
+
+    const context = ctx();
+    const bound = auditableBooks();
+    const rest = listLorebooks().filter(name => !bound.includes(name));
+
+    const form = document.createElement('div');
+    form.className = 'btw-entry-form btw-audit-form';
+    form.innerHTML = `
+        <h3>Audit stale lore</h3>
+        <p class="btw-hint">
+            Compares the reference material against the story as it now stands, and reports verbatim
+            old → new spans. Nothing is written for you — you paste the replacements yourself.
+        </p>
+        <label>How much in-story time has passed?
+            <span class="btw-hint">Optional, but ages and dates cannot be recomputed without it.</span>
+            <input id="btw-audit-elapsed" class="text_pole" placeholder="e.g. roughly a year since the Frosthollow arc">
+        </label>
+        <div class="btw-audit-books">
+            <strong>Lorebooks</strong>
+            ${[...bound, ...rest].length
+                ? [...bound, ...rest].map(name => `<label class="btw-checkbox"><input type="checkbox" class="btw-audit-book" value="${escapeHtml(name)}"${bound.includes(name) ? ' checked' : ''}> ${escapeHtml(name)}${bound.includes(name) ? ' <span class="btw-hint">bound to this chat</span>' : ''}</label>`).join('')
+                : '<p class="btw-hint">No lorebooks found.</p>'}
+        </div>
+        <label class="btw-checkbox"><input type="checkbox" id="btw-audit-card" checked> The character card <span class="btw-hint">description, personality, scenario — where a faded boundary usually hides — plus any lorebook embedded in the card itself</span></label>
+        <label class="btw-checkbox"><input type="checkbox" id="btw-audit-persona" checked> User persona description</label>
+    `;
+
+    const result = await context.callGenericPopup(form, context.POPUP_TYPE.CONFIRM, '', {
+        okButton: 'Run audit',
+        cancelButton: 'Cancel',
+        wide: true,
+        large: true,
+        allowVerticalScrolling: true,
+    });
+    if (result !== context.POPUP_RESULT.AFFIRMATIVE) return;
+
+    const books = [...form.querySelectorAll('.btw-audit-book')]
+        .filter(element => element instanceof HTMLInputElement && element.checked)
+        .map(element => /** @type {HTMLInputElement} */ (element).value);
+
+    await startAudit({
+        books,
+        includeCard: /** @type {HTMLInputElement} */ (form.querySelector('#btw-audit-card')).checked,
+        includePersona: /** @type {HTMLInputElement} */ (form.querySelector('#btw-audit-persona')).checked,
+        elapsed: /** @type {HTMLInputElement} */ (form.querySelector('#btw-audit-elapsed')).value.trim(),
+    });
+}
+
+/**
+ * @param {string} content
+ * @param {Record<string, any>} [extra]
+ */
+function pushAuditNote(content, extra = {}) {
+    messages.push({ role: 'assistant', content, ts: Date.now(), meta: true, ...extra });
+    renderTranscript();
+}
+
+/**
+ * Run an audit and report it into the transcript, batch by batch.
+ *
+ * @param {object} scope
+ * @param {string[]} [scope.books]
+ * @param {boolean} [scope.includeCard]
+ * @param {boolean} [scope.includePersona]
+ * @param {string} [scope.elapsed]
+ * @param {import('./audit.js').AuditTarget[]} [scope.targets] Pre-collected, for a re-run of missed targets.
+ */
+async function startAudit(scope) {
+    if (busy) {
+        toast('The side thread is still working.', 'warning');
+        return;
+    }
+
+    openPanel();
+    const settings = getSettings();
+    lastAuditElapsed = scope.elapsed ?? lastAuditElapsed;
+
+    setBusy(true);
+    setStatus('Collecting targets…');
+    abortController = new AbortController();
+
+    try {
+        const targets = scope.targets ?? await collectAuditTargets({
+            books: scope.books || [],
+            includeCard: scope.includeCard,
+            includePersona: scope.includePersona,
+            // A card-embedded book has no row of its own in the dialog, so it follows
+            // the card: unticking everything must actually audit nothing.
+            includeEmbedded: scope.includeCard,
+        });
+        if (!targets.length) {
+            toast('Nothing to audit: no enabled entries or card text in the selected scope.', 'info');
+            return;
+        }
+        // Fresh index per run: `E4` from a previous collection is a different entry.
+        auditRunId += 1;
+        auditTargetIndex = new Map(targets.map(target => [target.id, target]));
+
+        const batches = batchTargets(targets, settings.auditBatchChars);
+        setStatus('Assembling the story so far…');
+        const storyNow = await buildStoryNow(settings);
+
+        // The story block is re-sent with every batch, so its size is the real bill.
+        pushAuditNote([
+            `**Lore audit** — ${targets.length} target${targets.length === 1 ? '' : 's'} across ${batches.length} request${batches.length === 1 ? '' : 's'}, story context ${storyNow.length.toLocaleString()} chars each.`,
+            lastAuditElapsed ? `In-story time elapsed: ${lastAuditElapsed}` : '_No elapsed time given — ages cannot be recomputed reliably._',
+        ].join('\n\n'));
+
+        /** @type {import('./thread.js').ThreadMessage|null} */
+        let current = null;
+        let currentIndex = -1;
+
+        const outcome = await runAudit({
+            settings,
+            batches,
+            storyNow,
+            elapsed: lastAuditElapsed,
+            signal: abortController.signal,
+            onBatchStart: (index, total, batch) => {
+                setStatus(`Auditing batch ${index + 1}/${total} — ${batch.length} target${batch.length === 1 ? '' : 's'}…`);
+                current = { role: 'assistant', content: '', ts: Date.now(), meta: true };
+                messages.push(current);
+                currentIndex = messages.length - 1;
+                renderTranscript();
+            },
+            onProgress: text => {
+                if (!current) return;
+                current.content = text;
+                updateMessageBody(currentIndex, text);
+            },
+            onBatchDone: (text, coverage) => {
+                if (!current) return;
+                const notes = coverage.missed.length
+                    ? `\n\n_Never ruled on in this batch: ${coverage.missed.map(target => target.id).join(', ')}._`
+                    : '';
+                current.content = `${String(text).trim() || '_(the backend returned nothing for this batch)_'}${notes}`;
+                renderTranscript();
+                persist();
+            },
+        });
+
+        const lines = [`**Audit ${outcome.stopped ? 'stopped' : 'finished'}** — ${outcome.findings} stale, ${outcome.ok} unchanged, out of ${targets.length} target${targets.length === 1 ? '' : 's'}.`];
+        if (outcome.missed.length) {
+            lines.push(
+                `**${outcome.missed.length} target${outcome.missed.length === 1 ? '' : 's'} were never ruled on.** Not "clean" — simply unanswered:`,
+                outcome.missed.map(target => `- \`${target.id}\` ${target.label}`).join('\n'),
+            );
+        }
+        pushAuditNote(
+            lines.join('\n\n'),
+            outcome.missed.length ? { audit: { missedIds: outcome.missed.map(target => target.id), runId: auditRunId } } : {},
+        );
+        setStatus('');
+    } catch (error) {
+        const aborted = /** @type {any} */ (error)?.name === 'AbortError' || abortController?.signal.aborted;
+        pushAuditNote(aborted ? '_(audit stopped)_' : `**Audit failed:** ${/** @type {any} */ (error)?.message || String(error)}`);
+        if (!aborted) console.error(LOG_PREFIX, error);
+        setStatus('');
+    } finally {
+        abortController = null;
+        setBusy(false);
+        renderTranscript();
+        persist();
+    }
 }
 
 // ── Context preview ─────────────────────────────────────────────────────────
@@ -549,6 +822,24 @@ async function showContextPreview() {
 
 // ── Save as lorebook entry ──────────────────────────────────────────────────
 
+/**
+ * The system prompt asks for `TITLE:` and `KEYS:` lines just above the fenced
+ * entry body, so read them back instead of making the author retype them. Models
+ * like to bold those labels, and some put the pair inside the fence despite being
+ * told not to — searching the whole message covers both.
+ *
+ * @param {string} content
+ * @returns {{title: string, keys: string}}
+ */
+function parseEntryHeader(content) {
+    const source = String(content || '');
+    const read = (/** @type {string} */ label) => {
+        const match = source.match(new RegExp(`^\\s*[*_#>\\s-]*${label}\\s*[:：]\\s*(.+)$`, 'im'));
+        return String(match?.[1] || '').replace(/[*_`]/g, '').trim();
+    };
+    return { title: read('TITLE'), keys: read('KEYS') };
+}
+
 /** @param {import('./thread.js').ThreadMessage} message */
 async function showSaveEntryDialog(message) {
     const context = ctx();
@@ -559,6 +850,7 @@ async function showSaveEntryDialog(message) {
     })();
     const codeBlocks = extractCodeBlocks(message.content);
     const defaultBody = codeBlocks[0] || message.content;
+    const header = parseEntryHeader(message.content);
 
     const form = document.createElement('div');
     form.className = 'btw-entry-form';
@@ -575,15 +867,30 @@ async function showSaveEntryDialog(message) {
             <input id="btw-entry-keys" class="text_pole" placeholder="Marla, the fence, harbour contact">
         </label>
         <label class="btw-checkbox"><input type="checkbox" id="btw-entry-constant"> Always on (constant entry)</label>
+        ${codeBlocks.length > 1 ? `<label>Drafted block <span class="btw-hint">${codeBlocks.length} fenced blocks in this answer</span>
+            <select id="btw-entry-block" class="text_pole">
+                ${codeBlocks.map((block, index) => `<option value="${index}">${index + 1}. ${escapeHtml(block.split('\n')[0].slice(0, 70))}</option>`).join('')}
+            </select>
+        </label>` : ''}
         <label>Content
             <textarea id="btw-entry-content" class="text_pole" rows="12"></textarea>
         </label>
-        ${codeBlocks.length > 1 ? `<p class="btw-hint">${codeBlocks.length} fenced blocks found in this answer; the first one is prefilled.</p>` : ''}
     `;
 
     const bookInput = /** @type {HTMLInputElement} */ (form.querySelector('#btw-entry-book'));
     bookInput.value = bound && books.includes(bound) ? bound : (books[0] || '');
-    /** @type {HTMLTextAreaElement} */ (form.querySelector('#btw-entry-content')).value = defaultBody;
+    /** @type {HTMLInputElement} */ (form.querySelector('#btw-entry-title')).value = header.title;
+    /** @type {HTMLInputElement} */ (form.querySelector('#btw-entry-keys')).value = header.keys;
+
+    const contentArea = /** @type {HTMLTextAreaElement} */ (form.querySelector('#btw-entry-content'));
+    contentArea.value = defaultBody;
+
+    const blockPicker = form.querySelector('#btw-entry-block');
+    if (blockPicker instanceof HTMLSelectElement) {
+        blockPicker.addEventListener('change', () => {
+            contentArea.value = codeBlocks[Number(blockPicker.value)] || contentArea.value;
+        });
+    }
 
     const result = await context.callGenericPopup(form, context.POPUP_TYPE.CONFIRM, '', {
         okButton: 'Save entry',
@@ -618,6 +925,10 @@ async function showSaveEntryDialog(message) {
 // ── Lifecycle hooks used by index.js ────────────────────────────────────────
 
 export function onChatChanged() {
+    // Invalidate audit targets even when the panel was never built: they describe
+    // the chat we just left, and its ids would resolve against the wrong entries.
+    auditTargetIndex = new Map();
+    auditRunId += 1;
     if (!panel) return;
     stopGeneration();
     setBusy(false);
