@@ -1,0 +1,12 @@
+{
+    "display_name": "BTW — Side Thread",
+    "name": "sillytavern-side-thread",
+    "version": "0.1.0",
+    "author": "rendyuwu",
+    "description": "Floating out-of-character side chat for SillyTavern. Discuss lore, plan NPCs and draft world info with the full context of the active chat, character card and lorebooks — without touching the main conversation.",
+    "js": "index.js",
+    "css": "style.css",
+    "loading_order": 20,
+    "homePage": "https://github.com/rendyuwu/SillyTavern-SideThread",
+    "auto_update": true
+}

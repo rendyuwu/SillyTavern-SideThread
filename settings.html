@@ -1,0 +1,135 @@
+<div class="btw-settings">
+    <div class="inline-drawer">
+        <div class="inline-drawer-toggle inline-drawer-header">
+            <b>BTW — Side Thread</b>
+            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+        </div>
+        <div class="inline-drawer-content">
+
+            <div class="btw-settings-row">
+                <input id="btw-open-panel" class="menu_button" type="button" value="Open side thread">
+                <small class="btw-hint">Also available from the wand menu, or with <code>/btw &lt;question&gt;</code>.</small>
+            </div>
+
+            <hr>
+            <h4>Connection</h4>
+            <small class="btw-hint">
+                The side thread can use its own backend so a cheap model answers questions while your
+                roleplay model keeps writing. "Main API" reuses whatever SillyTavern is connected to.
+            </small>
+
+            <label for="btw-connection-source">Source</label>
+            <select id="btw-connection-source" class="text_pole">
+                <option value="default">Main API (current connection)</option>
+                <option value="profile">Connection profile</option>
+                <option value="ollama">Ollama (direct)</option>
+                <option value="openai">OpenAI-compatible (direct)</option>
+            </select>
+
+            <div id="btw-profile-group" class="btw-group">
+                <label for="btw-connection-profile">Connection profile</label>
+                <select id="btw-connection-profile" class="text_pole"></select>
+            </div>
+
+            <div id="btw-ollama-group" class="btw-group">
+                <label for="btw-ollama-url">Ollama URL</label>
+                <input id="btw-ollama-url" class="text_pole" type="text" placeholder="http://localhost:11434">
+                <label for="btw-ollama-model">Model</label>
+                <div class="btw-settings-row">
+                    <select id="btw-ollama-model" class="text_pole"></select>
+                    <input id="btw-ollama-refresh" class="menu_button" type="button" value="Refresh">
+                </div>
+                <small class="btw-hint">Requests go straight from the browser, so the server must allow this origin (<code>OLLAMA_ORIGINS</code>).</small>
+            </div>
+
+            <div id="btw-openai-group" class="btw-group">
+                <label for="btw-openai-url">Endpoint URL</label>
+                <input id="btw-openai-url" class="text_pole" type="text" placeholder="https://api.example.com/v1">
+                <label for="btw-openai-key">API key</label>
+                <input id="btw-openai-key" class="text_pole" type="password" placeholder="sk-…">
+                <label for="btw-openai-model">Model</label>
+                <div class="btw-settings-row">
+                    <select id="btw-openai-model" class="text_pole"></select>
+                    <input id="btw-openai-refresh" class="menu_button" type="button" value="Refresh">
+                </div>
+                <input id="btw-openai-model-manual" class="text_pole" type="text" placeholder="…or type the model name manually">
+                <small class="btw-hint">The key is stored in your SillyTavern settings, not in the secrets store.</small>
+            </div>
+
+            <label for="btw-preset">Completion preset override</label>
+            <select id="btw-preset" class="text_pole"></select>
+            <small class="btw-hint">Applied to connection-profile requests only.</small>
+
+            <div class="btw-settings-grid">
+                <div>
+                    <label for="btw-max-tokens">Max response length</label>
+                    <input id="btw-max-tokens" class="text_pole" type="number" min="0" step="64">
+                </div>
+                <div>
+                    <label for="btw-temperature">Temperature <small>(direct modes only, 0 = backend default)</small></label>
+                    <input id="btw-temperature" class="text_pole" type="number" min="0" max="2" step="0.05">
+                </div>
+            </div>
+
+            <label class="checkbox_label" for="btw-stream">
+                <input id="btw-stream" type="checkbox">
+                <span>Stream replies <small>(connection profile and OpenAI-compatible modes)</small></span>
+            </label>
+
+            <hr>
+            <h4>What the side thread sees</h4>
+
+            <label for="btw-history-mode">Chat history</label>
+            <select id="btw-history-mode" class="text_pole">
+                <option value="last">Last N messages</option>
+                <option value="all">Entire chat</option>
+                <option value="none">None</option>
+            </select>
+
+            <label for="btw-history-count">N messages</label>
+            <input id="btw-history-count" class="text_pole" type="number" min="1" max="2000" step="5">
+
+            <label for="btw-lore-mode">Lorebooks</label>
+            <select id="btw-lore-mode" class="text_pole">
+                <option value="activated">Activated entries only (what the story is using now)</option>
+                <option value="full">Every entry in every bound book</option>
+                <option value="off">None</option>
+            </select>
+
+            <label for="btw-lore-max-chars">Lore character budget <small>(full mode)</small></label>
+            <input id="btw-lore-max-chars" class="text_pole" type="number" min="1000" max="400000" step="1000">
+
+            <label class="checkbox_label" for="btw-include-card"><input id="btw-include-card" type="checkbox"><span>Character card (description, personality, scenario)</span></label>
+            <label class="checkbox_label" for="btw-include-examples"><input id="btw-include-examples" type="checkbox"><span>Example dialogue</span></label>
+            <label class="checkbox_label" for="btw-include-first-message"><input id="btw-include-first-message" type="checkbox"><span>First message / greeting</span></label>
+            <label class="checkbox_label" for="btw-include-persona"><input id="btw-include-persona" type="checkbox"><span>User persona description</span></label>
+            <label class="checkbox_label" for="btw-include-author-note"><input id="btw-include-author-note" type="checkbox"><span>Author's note</span></label>
+            <label class="checkbox_label" for="btw-include-hidden"><input id="btw-include-hidden" type="checkbox"><span>Hidden / system messages from the chat</span></label>
+
+            <label for="btw-side-thread-turns">Side-thread turns kept in the request</label>
+            <input id="btw-side-thread-turns" class="text_pole" type="number" min="1" max="100" step="1">
+
+            <hr>
+            <h4>Instructions</h4>
+            <label for="btw-system-prompt">System prompt</label>
+            <textarea id="btw-system-prompt" class="text_pole" rows="10"></textarea>
+            <input id="btw-system-prompt-reset" class="menu_button" type="button" value="Restore default prompt">
+
+            <hr>
+            <h4>Panel</h4>
+            <div class="btw-settings-grid">
+                <div>
+                    <label for="btw-font-size">Font size (px)</label>
+                    <input id="btw-font-size" class="text_pole" type="number" min="9" max="28" step="1">
+                </div>
+                <div>
+                    <label for="btw-reset-geometry">Position</label>
+                    <input id="btw-reset-geometry" class="menu_button" type="button" value="Reset panel position">
+                </div>
+            </div>
+            <label class="checkbox_label" for="btw-persist-threads"><input id="btw-persist-threads" type="checkbox"><span>Remember each chat's side thread between sessions</span></label>
+            <label class="checkbox_label" for="btw-debug"><input id="btw-debug" type="checkbox"><span>Debug logging to the console</span></label>
+
+        </div>
+    </div>
+</div>

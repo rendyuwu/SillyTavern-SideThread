@@ -1,0 +1,13 @@
+node_modules/
+*.log
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Local scratch
+*.local
+*.original.md
