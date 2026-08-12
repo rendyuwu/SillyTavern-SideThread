@@ -152,6 +152,12 @@ Four decisions hold it up:
   the settings hint says so.
 - **Batches are small on purpose** (`auditBatchChars`, default 7000 — about two entries). Twenty
   entries in one request gets three of them read.
+- **Identical targets are merged** by `dedupeTargets()`, before ids are assigned. A card ships with
+  an embedded `character_book`, the same book also exists as a standalone world file, and now every
+  entry is collected twice — one real install had 24 targets collapse to 14. The duplicate is not
+  dropped silently: its location lands in `alsoAt` and the report names it, because fixing one copy
+  and not the other leaves the card and the file contradicting each other. Near-identical copies are
+  deliberately left as separate targets — they are different texts and each needs its own verdict.
 - **`auditHistoryCount` caps the evidence separately** from the conversational history setting. The
   story block is re-sent with *every* batch, so `historyMode: 'all'` on a 1 MB chat would be paid
   for once per request. The running summary carries the older material.

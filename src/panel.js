@@ -720,8 +720,9 @@ async function startAudit(scope) {
         const storyNow = await buildStoryNow(settings);
 
         // The story block is re-sent with every batch, so its size is the real bill.
+        const duplicates = targets.reduce((total, target) => total + (target.alsoAt?.length || 0), 0);
         pushAuditNote([
-            `**Lore audit** — ${targets.length} target${targets.length === 1 ? '' : 's'} across ${batches.length} request${batches.length === 1 ? '' : 's'}, story context ${storyNow.length.toLocaleString()} chars each.`,
+            `**Lore audit** — ${targets.length} target${targets.length === 1 ? '' : 's'}${duplicates ? ` (${duplicates} duplicate${duplicates === 1 ? '' : 's'} merged)` : ''} across ${batches.length} request${batches.length === 1 ? '' : 's'}, story context ${storyNow.length.toLocaleString()} chars each.`,
             lastAuditElapsed ? `In-story time elapsed: ${lastAuditElapsed}` : '*No elapsed time given — ages cannot be recomputed reliably.*',
         ].join('\n\n'));
 

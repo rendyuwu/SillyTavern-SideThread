@@ -30,6 +30,7 @@ import { sendSideRequest, canStream } from './llm.js';
  * @property {string} [book] Lorebook file name, for lorebook targets.
  * @property {number} [uid] Entry uid, for lorebook targets.
  * @property {string[]} [keys]
+ * @property {string[]} [alsoAt] Other places the identical text lives.
  */
 
 /**
@@ -51,8 +52,44 @@ function trim(value) {
 // ── Collecting targets ───────────────────────────────────────────────────────
 
 /**
- * Every enabled entry of the given books, plus the card fields and persona text.
- * Ids are assigned in collection order so a batch always carries a contiguous run.
+ * Merge targets whose text is identical.
+ *
+ * The same entry routinely lives in two places at once: a card ships with an
+ * embedded `character_book`, the book also gets saved as a standalone world file,
+ * and now every entry exists twice. Auditing both doubles the requests and reports
+ * every finding twice.
+ *
+ * The duplicate is merged, not dropped silently — its location is recorded on the
+ * survivor, because a fix applied to only one copy leaves the two contradicting
+ * each other. Near-identical copies are left alone on purpose: they really are
+ * different texts, and both need their own verdict.
+ *
+ * @param {any[]} targets
+ * @returns {any[]}
+ */
+function dedupeTargets(targets) {
+    /** @type {Map<string, any>} */
+    const seen = new Map();
+    /** @type {any[]} */
+    const merged = [];
+
+    for (const target of targets) {
+        const fingerprint = String(target.content).replace(/\s+/g, ' ').trim().toLowerCase();
+        const existing = seen.get(fingerprint);
+        if (existing) {
+            existing.alsoAt = [...(existing.alsoAt || []), target.where];
+            continue;
+        }
+        seen.set(fingerprint, target);
+        merged.push(target);
+    }
+    return merged;
+}
+
+/**
+ * Every enabled entry of the given books, plus the card fields and persona text,
+ * deduplicated. Ids are assigned after the merge so a batch carries a contiguous
+ * run with no confusing gaps.
  *
  * @param {object} scope
  * @param {string[]} scope.books
@@ -63,10 +100,8 @@ function trim(value) {
  */
 export async function collectAuditTargets({ books, includeCard = true, includePersona = true, includeEmbedded = true }) {
     const context = ctx();
-    /** @type {AuditTarget[]} */
+    /** @type {any[]} */
     const targets = [];
-    let sequence = 0;
-    const nextId = () => `E${++sequence}`;
 
     /** @param {string} label @param {any} book */
     const pushBook = (label, book) => {
@@ -76,9 +111,12 @@ export async function collectAuditTargets({ books, includeCard = true, includePe
             const content = trim(record.content);
             if (!content) continue;
             const keys = Array.isArray(record.key) ? record.key.filter(Boolean) : [];
-            const memo = trim(record.comment) || keys.join(', ') || `uid ${record.uid}`;
+            // A title is a handle, not an index. Entries often carry no comment, and
+            // the whole key list is sixty characters of synonyms; three is enough to
+            // recognise, and the address below is what actually locates it.
+            const keyLabel = keys.slice(0, 3).join(', ') + (keys.length > 3 ? '…' : '');
+            const memo = trim(record.comment) || keyLabel || `uid ${record.uid}`;
             targets.push({
-                id: nextId(),
                 kind: 'lorebook',
                 label: `LOREBOOK "${label}" · uid ${record.uid} · ${memo}`,
                 title: memo,
@@ -112,7 +150,6 @@ export async function collectAuditTargets({ books, includeCard = true, includePe
                 const content = trim(value);
                 if (!content) continue;
                 targets.push({
-                    id: nextId(),
                     kind: 'card',
                     label: `CHARACTER CARD "${character.name}" · field: ${field}`,
                     title: `${character.name} — card ${field}`,
@@ -127,7 +164,6 @@ export async function collectAuditTargets({ books, includeCard = true, includePe
         const description = trim(context.powerUserSettings?.persona_description);
         if (description) {
             targets.push({
-                id: nextId(),
                 kind: 'persona',
                 label: `USER PERSONA "${trim(context.name1) || 'User'}" · description`,
                 title: `${trim(context.name1) || 'User'} — persona description`,
@@ -137,7 +173,7 @@ export async function collectAuditTargets({ books, includeCard = true, includePe
         }
     }
 
-    return targets;
+    return dedupeTargets(targets).map((target, index) => ({ ...target, id: `E${index + 1}` }));
 }
 
 /**
@@ -295,7 +331,13 @@ export function humanizeReport(text, batch) {
 
     out = out.replace(/^(#{1,6})\s*\**\s*(E\d+)\b[^\n]*$/gim, (line, hashes, id) => {
         const target = byId.get(id);
-        return target ? `${hashes} ${target.title}\n\n\`${target.where}\`\n` : line;
+        if (!target) return line;
+        // A merged duplicate has to be named: fixing one copy and not the other
+        // leaves the card and the world file contradicting each other.
+        const also = target.alsoAt?.length
+            ? `\n\n*The identical text also lives in ${target.alsoAt.map((/** @type {string} */ where) => `\`${where}\``).join(', ')} — apply the fix there too.*`
+            : '';
+        return `${hashes} ${target.title}\n\n\`${target.where}\`${also}\n`;
     });
 
     out = out.replace(/\n{3,}/g, '\n\n').trim();

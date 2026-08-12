@@ -130,6 +130,10 @@ Two properties are what make the report worth trusting:
   unanswered too, so an abort cannot quietly shrink the denominator.
 - **Batches are small on purpose**, around two entries per request. Twenty entries in one request
   gets three of them read. More requests, closer reading.
+- **Duplicates are merged.** Many cards ship with a lorebook embedded in the card *and* the same
+  book saved as a standalone world file, so every entry would otherwise be audited twice and every
+  finding reported twice. Identical text is merged into one target, and the report names the other
+  place it lives — because fixing one copy and not the other leaves the two contradicting each other.
 
 The audit loads the books itself, so the lore mode above does not constrain it: it has to see the
 entries that are *not* currently triggering, because a place nobody has mentioned in a year is both
