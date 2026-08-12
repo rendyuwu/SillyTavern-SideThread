@@ -231,6 +231,21 @@
     opacity: 1;
 }
 
+/* Reveal-on-hover hides these forever on a touch screen, so pin them open and
+   give them a real touch target. Keyed on the input device, not the width — a
+   touch laptop cannot hover either. */
+@media (hover: none) {
+    .btw-message-actions {
+        gap: 4px;
+        opacity: 1;
+    }
+
+    .btw-action-btn {
+        width: 32px;
+        height: 32px;
+    }
+}
+
 /* ── Quick prompts ──────────────────────────────────────────────────────── */
 
 .btw-chips {
@@ -256,37 +271,57 @@
 
 /* ── Composer ───────────────────────────────────────────────────────────── */
 
+/* One bordered shell owns the textarea and the button, so the composer reads as
+   a single control. The button sits on its own row underneath rather than
+   floating over the text, which keeps long input readable at any panel width. */
+
 .btw-composer {
     display: flex;
-    align-items: flex-end;
-    gap: 6px;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px;
+    background-color: var(--black30a, rgba(0, 0, 0, 0.25));
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.15));
+    border-radius: 10px;
+}
+
+.btw-composer:focus-within {
+    border-color: var(--SmartThemeQuoteColor, rgba(255, 255, 255, 0.4));
 }
 
 .btw-composer textarea {
-    flex: 1;
     max-height: 180px;
-    padding: 6px 8px;
+    padding: 2px 2px 0;
     font-family: inherit;
     font-size: 1em;
     line-height: 1.4;
     color: inherit;
     resize: none;
-    background-color: var(--black30a, rgba(0, 0, 0, 0.25));
-    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.15));
-    border-radius: 6px;
+    background: transparent;
+    border: none;
+    /* The shell shows focus for the whole composer. */
+    outline: none;
+}
+
+.btw-composer-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
 }
 
 .btw-send-btn {
     display: flex;
+    flex: 0 0 auto;
     align-items: center;
     justify-content: center;
-    width: 34px;
-    height: 34px;
+    width: 32px;
+    height: 32px;
     color: inherit;
     cursor: pointer;
     background-color: var(--white20a, rgba(255, 255, 255, 0.12));
     border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.15));
-    border-radius: 6px;
+    border-radius: 999px;
 }
 
 .btw-send-btn:hover:not(:disabled) {
@@ -300,6 +335,12 @@
 
 .btw-stop-btn {
     color: #e08484;
+}
+
+/* An author `display` beats the UA rule for [hidden], so anything in the panel
+   that toggles the attribute needs this to actually disappear. */
+.btw-panel [hidden] {
+    display: none !important;
 }
 
 .btw-status {
@@ -354,6 +395,32 @@
 
     .btw-resizer {
         display: none;
+    }
+
+    /* Four chips wrap to two rows on a phone and eat transcript height. */
+    .btw-chips {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        scrollbar-width: none;
+        overscroll-behavior-x: contain;
+    }
+
+    .btw-chips::-webkit-scrollbar {
+        display: none;
+    }
+
+    .btw-chip {
+        flex: 0 0 auto;
+    }
+
+    /* iOS zooms the whole page when a focused field is under 16px. */
+    .btw-composer textarea {
+        font-size: max(16px, 1em);
+    }
+
+    .btw-send-btn {
+        width: 40px;
+        height: 40px;
     }
 }
 

@@ -69,8 +69,7 @@ function panelHtml() {
             <div class="btw-composer">
                 <textarea id="btw-input" rows="2" placeholder="Ask about the lore, plan an NPC, sanity-check the plot…"></textarea>
                 <div class="btw-composer-actions">
-                    <button type="button" class="btw-send-btn" id="btw-send-btn" title="Send"><i class="fa-solid fa-paper-plane"></i></button>
-                    <button type="button" class="btw-send-btn btw-stop-btn" id="btw-stop-btn" title="Stop" hidden><i class="fa-solid fa-stop"></i></button>
+                    <button type="button" class="btw-send-btn" id="btw-send-btn" title="Send" aria-label="Send"><i class="fa-solid fa-paper-plane"></i></button>
                 </div>
             </div>
             <div class="btw-status" id="btw-status"></div>
@@ -104,8 +103,7 @@ function createPanel() {
     element.querySelector('#btw-collapse-btn')?.addEventListener('click', toggleCollapse);
     element.querySelector('#btw-clear-btn')?.addEventListener('click', onClearClick);
     element.querySelector('#btw-preview-btn')?.addEventListener('click', showContextPreview);
-    element.querySelector('#btw-send-btn')?.addEventListener('click', onSendClick);
-    element.querySelector('#btw-stop-btn')?.addEventListener('click', stopGeneration);
+    element.querySelector('#btw-send-btn')?.addEventListener('click', onComposerAction);
 
     const input = /** @type {HTMLTextAreaElement} */ (element.querySelector('#btw-input'));
     input.addEventListener('keydown', onInputKeyDown);
@@ -343,11 +341,26 @@ function onInputKeyDown(event) {
     onSendClick();
 }
 
+/**
+ * The composer has one button, not two. While a reply is in flight it is the
+ * stop button; otherwise it sends. Two buttons that hide each other invite the
+ * hidden-attribute trap, and on a narrow panel they cost width for nothing.
+ */
+function onComposerAction() {
+    if (busy) stopGeneration();
+    else onSendClick();
+}
+
 function onSendClick() {
     const input = /** @type {HTMLTextAreaElement|null} */ (panel?.querySelector('#btw-input'));
     if (!input) return;
     const text = input.value.trim();
     if (!text) return;
+    // ask() refuses while busy, so clearing the box first would eat the question.
+    if (busy) {
+        toast('The side thread is still answering.', 'warning');
+        return;
+    }
     input.value = '';
     autoGrowInput();
     ask(text).catch(error => console.error(LOG_PREFIX, error));
@@ -357,13 +370,15 @@ function onSendClick() {
 function setBusy(value) {
     busy = value;
     const send = panel?.querySelector('#btw-send-btn');
-    const stop = panel?.querySelector('#btw-stop-btn');
+    if (!(send instanceof HTMLButtonElement)) return;
+    // `default` cannot abort, so it stays a disabled Send rather than a dead Stop.
     const canStop = value && canAbort(getSettings());
-    if (send instanceof HTMLButtonElement) {
-        send.disabled = value;
-        send.hidden = canStop;
-    }
-    if (stop instanceof HTMLButtonElement) stop.hidden = !canStop;
+    const label = canStop ? 'Stop' : 'Send';
+    send.classList.toggle('btw-stop-btn', canStop);
+    send.disabled = value && !canStop;
+    send.title = label;
+    send.setAttribute('aria-label', label);
+    send.innerHTML = `<i class="fa-solid ${canStop ? 'fa-stop' : 'fa-paper-plane'}"></i>`;
 }
 
 export function stopGeneration() {
