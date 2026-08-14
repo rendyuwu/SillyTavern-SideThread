@@ -68,6 +68,73 @@ function toast(message, level = 'info') {
     else console.log(LOG_PREFIX, message);
 }
 
+/**
+ * Copy text, with a fallback for installs served over plain HTTP.
+ *
+ * `navigator.clipboard` is secure-context only. Reached over `http://` on a LAN
+ * or VPN address it is not permission-gated, it is simply absent — and there is
+ * nothing for the user to grant in browser settings, because the page never gets
+ * to ask. That is a normal way to run SillyTavern, so fall back to the deprecated
+ * `execCommand('copy')`, which still works in every current browser as long as it
+ * runs inside a user gesture. Both callers are click handlers, and the async
+ * clipboard attempt is the only await ahead of it, so the gesture survives.
+ *
+ * @param {string} text
+ * @returns {Promise<boolean>} whether the text reached the clipboard
+ */
+async function copyToClipboard(text) {
+    try {
+        if (typeof navigator.clipboard?.writeText === 'function') {
+            await navigator.clipboard.writeText(text);
+            return true;
+        }
+    } catch (error) {
+        // Present but refused — a Permissions-Policy header, or a denied
+        // permission. The fallback below is not subject to either.
+        debugLog('clipboard write refused, falling back', error);
+    }
+    return legacyCopy(text);
+}
+
+/**
+ * @param {string} text
+ * @returns {boolean}
+ */
+function legacyCopy(text) {
+    if (typeof document.execCommand !== 'function') return false;
+
+    const area = document.createElement('textarea');
+    area.value = text;
+    // Off-screen rather than hidden: a `display: none` field cannot be selected.
+    // `readonly` keeps the on-screen keyboard down on the mobile layout.
+    area.setAttribute('readonly', '');
+    area.style.position = 'fixed';
+    area.style.top = '0';
+    area.style.left = '-9999px';
+    document.body.appendChild(area);
+
+    // The copy steals the selection, so put the user's own back afterwards.
+    const selection = document.getSelection();
+    const previous = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+
+    let copied = false;
+    try {
+        area.focus({ preventScroll: true });
+        area.select();
+        area.setSelectionRange(0, text.length);
+        copied = document.execCommand('copy');
+    } catch (error) {
+        debugLog('execCommand copy failed', error);
+    } finally {
+        area.remove();
+        if (selection && previous) {
+            selection.removeAllRanges();
+            selection.addRange(previous);
+        }
+    }
+    return copied;
+}
+
 // ── Construction ─────────────────────────────────────────────────────────────
 
 function panelHtml() {
@@ -349,12 +416,9 @@ function decorateCodeBlocks(container) {
         button.title = language === 'new' ? 'Copy the replacement' : 'Copy';
         button.innerHTML = '<i class="fa-solid fa-copy"></i>';
         button.addEventListener('click', async () => {
-            try {
-                await navigator.clipboard.writeText(element.querySelector('code')?.textContent || '');
-                toast(language === 'new' ? 'Replacement copied.' : 'Copied.', 'success');
-            } catch {
-                toast('Clipboard blocked by the browser.', 'warning');
-            }
+            const copied = await copyToClipboard(element.querySelector('code')?.textContent || '');
+            if (copied) toast(language === 'new' ? 'Replacement copied.' : 'Copied.', 'success');
+            else toast('Copy failed. Select the text and copy it by hand.', 'warning');
         });
         wrap.appendChild(button);
     }
@@ -400,12 +464,9 @@ function renderMessageActions(message, index) {
     };
 
     add('fa-copy', 'Copy', async () => {
-        try {
-            await navigator.clipboard.writeText(message.content);
-            toast('Copied.', 'success');
-        } catch {
-            toast('Clipboard blocked by the browser.', 'warning');
-        }
+        const copied = await copyToClipboard(message.content);
+        if (copied) toast('Copied.', 'success');
+        else toast('Copy failed. Select the text and copy it by hand.', 'warning');
     });
     add('fa-book-medical', 'Save as lorebook entry', () => showSaveEntryDialog(message));
     add('fa-rotate-right', 'Regenerate this answer', () => regenerateFrom(index));
