@@ -291,6 +291,11 @@
     opacity: 1;
 }
 
+/* The user bubble hangs off the right edge, so its actions follow it. */
+.btw-user-actions {
+    justify-content: flex-end;
+}
+
 /* Reveal-on-hover hides these forever on a touch screen, so pin them open and
    give them a real touch target. Keyed on the input device, not the width — a
    touch laptop cannot hover either. */
@@ -304,6 +309,39 @@
         width: 32px;
         height: 32px;
     }
+}
+
+/* ── Inline editing ─────────────────────────────────────────────────────── */
+
+/* A user bubble is right-aligned and capped at 88%; the editor takes the row. */
+.btw-message-user.btw-message-editing {
+    align-self: stretch;
+    max-width: 100%;
+}
+
+.btw-edit-area {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 56px;
+    padding: 4px 6px;
+    font: inherit;
+    color: inherit;
+    resize: vertical;
+    background-color: var(--black30a, rgba(0, 0, 0, 0.3));
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.2));
+    border-radius: 6px;
+}
+
+.btw-edit-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 4px;
+    margin-top: 4px;
+}
+
+.btw-edit-actions .menu_button {
+    margin: 0;
 }
 
 /* ── Quick prompts ──────────────────────────────────────────────────────── */
@@ -403,10 +441,37 @@
     display: none !important;
 }
 
+.btw-status-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+
 .btw-status {
+    flex: 1;
+    min-width: 0;
     min-height: 1em;
     font-size: 0.8em;
     opacity: 0.6;
+}
+
+.btw-undo-btn {
+    flex: 0 0 auto;
+    padding: 1px 8px;
+    font-size: 0.8em;
+    color: inherit;
+    white-space: nowrap;
+    cursor: pointer;
+    background: transparent;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.25));
+    border-radius: 6px;
+    opacity: 0.75;
+}
+
+.btw-undo-btn:hover {
+    background-color: var(--white20a, rgba(255, 255, 255, 0.15));
+    opacity: 1;
 }
 
 /* ── Resizers ───────────────────────────────────────────────────────────── */

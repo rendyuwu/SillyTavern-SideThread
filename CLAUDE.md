@@ -42,7 +42,7 @@ Modules under `src/`, roughly in data-flow order:
 | `context.js` | Assembles the system prompt from live ST state; `buildContext()`, `countTokens()` |
 | `thread.js` | Per-chat transcripts in localStorage; `threadForRequest()` window |
 | `llm.js` | `sendSideRequest()` dispatch across four backends; `canStream()` / `canAbort()` |
-| `panel.js` | The floating panel: transcript, composer, streaming, message actions |
+| `panel.js` | The floating panel: transcript, composer, streaming, message actions, rewind |
 | `geometry.js` | Drag, corner resize, viewport-clamped geometry persistence |
 | `markdown.js` | Deliberately minimal markdown → safe HTML; `extractCodeBlocks()` |
 | `lorebook.js` | Writes an answer back out as a World Info entry |
@@ -126,6 +126,31 @@ straight in and rely on it.
 
 Streaming patches a single bubble via `updateMessageBody()` instead of re-rendering the transcript,
 and only auto-scrolls when the user is already pinned within 48px of the bottom.
+
+### Rewind: regenerate and edit-and-resend (`panel.js`)
+
+Both ways of taking a turn back run through `rewindTo(index, replacedIndex, label)`: regenerating an
+answer re-asks the question above it, editing a user message resends the new text. Truncation *is*
+the model — there are no branches and no swipes. Cut to `messages.slice(0, index)`, then
+`ask(…, { keepUndo: true })`.
+
+- The confirmation is keyed on the **tail** (`replacedIndex + 1` onwards), not on the total dropped:
+  the answer being replaced was going to be replaced anyway. Redoing the newest answer stays one
+  click, while reaching four exchanges back says how many messages go and how many of them are audit
+  reports.
+- **One undo snapshot, in memory only** (`undoStash`). Persisting it would put a second copy of the
+  thread inside the 1.5 MB cap, and a snapshot restored under a different chat would write another
+  chat's thread over this one — the hazard `auditRunId` already guards for audit ids. It is
+  invalidated by the next question (hence the `keepUndo` flag, which only the two rewind callers
+  pass), by an audit, by Clear, by a chat change, and by a reload.
+- The question to re-ask is found by walking **back past `meta` messages**, not by assuming
+  `index - 1`: an audit report is an assistant message that is not part of the conversation.
+- Error and stopped replies keep their regenerate button — a request that failed is the one that most
+  needs re-sending — but not Copy or Save as lorebook entry.
+- The inline editor lives in the DOM and nowhere else. `renderTranscript()` resets `editingIndex`, so
+  a re-render ends the edit instead of leaving a stale textarea holding text nobody will read;
+  `cancelEdit()` rebuilds the one bubble rather than the transcript, so an edit scrolled back in
+  history does not snap to the bottom on cancel.
 
 ### Lorebook writes (`lorebook.js`)
 

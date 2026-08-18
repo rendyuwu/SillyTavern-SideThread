@@ -55,6 +55,19 @@ let busy = false;
 let auditTargetIndex = new Map();
 let auditRunId = 0;
 let lastAuditElapsed = '';
+/**
+ * The transcript as it stood before the last regenerate or edit-and-resend, so
+ * one misclick is recoverable.
+ *
+ * In memory only. The store is capped, and a snapshot is a second copy of the
+ * whole thread; worse, a snapshot restored under a different chat would overwrite
+ * a thread it never belonged to — the same trap the audit run token guards.
+ *
+ * @type {{messages: import('./thread.js').ThreadMessage[], threadId: string, label: string, dropped: number}|null}
+ */
+let undoStash = null;
+/** Index of the user message currently open in an inline editor, or -1. */
+let editingIndex = -1;
 
 /** @returns {any} */
 function ctx() {
@@ -162,7 +175,10 @@ function panelHtml() {
                     <button type="button" class="btw-send-btn" id="btw-send-btn" title="Send" aria-label="Send"><i class="fa-solid fa-paper-plane"></i></button>
                 </div>
             </div>
-            <div class="btw-status" id="btw-status"></div>
+            <div class="btw-status-row">
+                <div class="btw-status" id="btw-status"></div>
+                <button type="button" class="btw-undo-btn" id="btw-undo-btn" hidden><i class="fa-solid fa-arrow-rotate-left"></i> Undo</button>
+            </div>
         </div>
         <div class="btw-resizer btw-resizer-bl" title="Resize"></div>
         <div class="btw-resizer btw-resizer-br" title="Resize"></div>
@@ -195,6 +211,7 @@ function createPanel() {
     element.querySelector('#btw-preview-btn')?.addEventListener('click', showContextPreview);
     element.querySelector('#btw-audit-btn')?.addEventListener('click', () => showAuditDialog());
     element.querySelector('#btw-send-btn')?.addEventListener('click', onComposerAction);
+    element.querySelector('#btw-undo-btn')?.addEventListener('click', onUndoClick);
 
     const input = /** @type {HTMLTextAreaElement} */ (element.querySelector('#btw-input'));
     input.addEventListener('keydown', onInputKeyDown);
@@ -327,6 +344,9 @@ function setStatus(text) {
 function renderTranscript() {
     const transcript = panel?.querySelector('#btw-transcript');
     if (!(transcript instanceof HTMLElement)) return;
+    // The inline editor lives in the DOM and nowhere else, so a rebuild ends it.
+    editingIndex = -1;
+    updateUndoButton();
 
     if (!messages.length) {
         const name = String(getSettings().buddyName || '').trim();
@@ -373,7 +393,11 @@ function renderMessage(message, index) {
         : [];
     if (missed.length) {
         wrapper.appendChild(renderAuditRetry(/** @type {import('./audit.js').AuditTarget[]} */ (missed)));
-    } else if (message.role === 'assistant' && !message.error && !message.meta && message.content) {
+    } else if (message.role === 'user') {
+        wrapper.appendChild(renderUserActions(index));
+    } else if (message.role === 'assistant' && !message.meta && message.content) {
+        // Error and stopped replies keep their regenerate button: a failed request
+        // is the one that most needs re-sending, and the alternative was retyping.
         wrapper.appendChild(renderMessageActions(message, index));
     }
     return wrapper;
@@ -452,26 +476,48 @@ function renderMessageActions(message, index) {
     const actions = document.createElement('div');
     actions.className = 'btw-message-actions';
 
-    /** @param {string} icon @param {string} title @param {() => void} handler */
-    const add = (icon, title, handler) => {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'btw-icon-btn btw-action-btn';
-        button.title = title;
-        button.innerHTML = `<i class="fa-solid ${icon}"></i>`;
-        button.addEventListener('click', handler);
-        actions.appendChild(button);
-    };
-
-    add('fa-copy', 'Copy', async () => {
-        const copied = await copyToClipboard(message.content);
-        if (copied) toast('Copied.', 'success');
-        else toast('Copy failed. Select the text and copy it by hand.', 'warning');
-    });
-    add('fa-book-medical', 'Save as lorebook entry', () => showSaveEntryDialog(message));
-    add('fa-rotate-right', 'Regenerate this answer', () => regenerateFrom(index));
+    if (!message.error) {
+        actions.appendChild(actionButton('fa-copy', 'Copy', async () => {
+            const copied = await copyToClipboard(message.content);
+            if (copied) toast('Copied.', 'success');
+            else toast('Copy failed. Select the text and copy it by hand.', 'warning');
+        }));
+        actions.appendChild(actionButton('fa-book-medical', 'Save as lorebook entry', () => showSaveEntryDialog(message)));
+    }
+    actions.appendChild(actionButton(
+        'fa-rotate-right',
+        message.error ? 'Try this question again' : 'Regenerate this answer',
+        () => regenerateFrom(index).catch(error => console.error(LOG_PREFIX, error)),
+    ));
 
     return actions;
+}
+
+/**
+ * @param {number} index
+ * @returns {HTMLElement}
+ */
+function renderUserActions(index) {
+    const actions = document.createElement('div');
+    actions.className = 'btw-message-actions btw-user-actions';
+    actions.appendChild(actionButton('fa-pen-to-square', 'Edit and resend', () => beginEditUser(index)));
+    return actions;
+}
+
+/**
+ * @param {string} icon
+ * @param {string} title
+ * @param {() => void} handler
+ * @returns {HTMLButtonElement}
+ */
+function actionButton(icon, title, handler) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btw-icon-btn btw-action-btn';
+    button.title = title;
+    button.innerHTML = `<i class="fa-solid ${icon}"></i>`;
+    button.addEventListener('click', handler);
+    return button;
 }
 
 function scrollToBottom() {
@@ -492,6 +538,7 @@ export function reloadThread() {
 function onClearClick() {
     if (!messages.length) return;
     messages = [];
+    undoStash = null;
     clearThread();
     renderTranscript();
     setStatus('');
@@ -501,9 +548,13 @@ function onClearClick() {
 
 function autoGrowInput() {
     const input = /** @type {HTMLTextAreaElement|null} */ (panel?.querySelector('#btw-input'));
-    if (!input) return;
-    input.style.height = 'auto';
-    input.style.height = `${Math.min(180, input.scrollHeight)}px`;
+    if (input) growTextarea(input, 180);
+}
+
+/** @param {HTMLTextAreaElement} area @param {number} max */
+function growTextarea(area, max) {
+    area.style.height = 'auto';
+    area.style.height = `${Math.min(max, area.scrollHeight)}px`;
 }
 
 /** @param {KeyboardEvent} event */
@@ -541,6 +592,181 @@ function onSendClick() {
     ask(text).catch(error => console.error(LOG_PREFIX, error));
 }
 
+// ── Rewind: regenerate, edit and resend, undo ───────────────────────────────
+
+/**
+ * Drop `messages[index…]` so that exchange can be produced again, keeping one
+ * undo snapshot.
+ *
+ * `replacedIndex` is the answer that is about to be regenerated anyway, so only
+ * what follows it is a surprise loss — that is what earns a confirmation, and
+ * that is why redoing the newest answer stays a single click.
+ *
+ * @param {number} index First message to drop.
+ * @param {number} replacedIndex Index of the answer being redone.
+ * @param {'regenerate'|'edit'} label
+ * @returns {Promise<boolean>} Whether the caller may proceed.
+ */
+async function rewindTo(index, replacedIndex, label) {
+    const tail = messages.slice(replacedIndex + 1);
+    if (tail.length) {
+        const reports = tail.filter(message => message.meta).length;
+        const context = ctx();
+        const confirmed = await context.callGenericPopup(
+            `<h3>${tail.length} later message${tail.length === 1 ? '' : 's'} will be deleted</h3>
+             <p>This ${label} drops the answer it replaces and everything after it${reports ? `, including ${reports} audit report${reports === 1 ? '' : 's'}` : ''}. Undo is offered once, until the next question.</p>`,
+            context.POPUP_TYPE.CONFIRM,
+            '',
+            { okButton: label === 'edit' ? 'Delete and resend' : 'Delete and regenerate', cancelButton: 'Cancel' },
+        );
+        if (confirmed !== context.POPUP_RESULT.AFFIRMATIVE) return false;
+    }
+
+    undoStash = { messages: messages.slice(), threadId: currentThreadId(), label, dropped: messages.length - index };
+    messages = messages.slice(0, index);
+    renderTranscript();
+    persist();
+    return true;
+}
+
+function updateUndoButton() {
+    const button = panel?.querySelector('#btw-undo-btn');
+    if (!(button instanceof HTMLButtonElement)) return;
+    const stash = undoStash;
+    const available = !!stash && !busy && stash.threadId === currentThreadId();
+    button.hidden = !available;
+    if (stash && available) {
+        button.title = `Restore the ${stash.dropped} message${stash.dropped === 1 ? '' : 's'} dropped by the last ${stash.label}`;
+    }
+}
+
+function onUndoClick() {
+    if (!undoStash || busy) return;
+    if (undoStash.threadId !== currentThreadId()) {
+        undoStash = null;
+        updateUndoButton();
+        return;
+    }
+    messages = undoStash.messages;
+    undoStash = null;
+    renderTranscript();
+    persist();
+    setStatus('Restored.');
+}
+
+/**
+ * Re-ask the question that produced the answer at `index`, dropping that answer
+ * and everything after it.
+ *
+ * The question is not simply `index - 1`: an audit report is an assistant message
+ * that belongs to the transcript but not to the conversation, so walk back past
+ * any of them instead of giving up.
+ *
+ * @param {number} index
+ */
+async function regenerateFrom(index) {
+    if (busy) {
+        toast('The side thread is still answering.', 'warning');
+        return;
+    }
+    let questionIndex = index - 1;
+    while (questionIndex >= 0 && messages[questionIndex]?.meta) questionIndex -= 1;
+    const question = messages[questionIndex];
+    if (!question || question.role !== 'user') {
+        toast('Cannot find the question for this answer.', 'warning');
+        return;
+    }
+
+    if (!await rewindTo(questionIndex, index, 'regenerate')) return;
+    await ask(question.content, { keepUndo: true });
+}
+
+/**
+ * Open the user message at `index` for editing, in place. The editor is DOM-only
+ * and never persisted, so any re-render ends it.
+ *
+ * @param {number} index
+ */
+function beginEditUser(index) {
+    if (busy) {
+        toast('The side thread is still answering.', 'warning');
+        return;
+    }
+    cancelEdit();
+
+    const message = messages[index];
+    const wrapper = panel?.querySelector(`.btw-message[data-index="${index}"]`);
+    if (!(wrapper instanceof HTMLElement) || message?.role !== 'user') return;
+
+    editingIndex = index;
+    // A user bubble is narrow and right-aligned; an editor wants the full width.
+    wrapper.classList.add('btw-message-editing');
+    wrapper.innerHTML = '';
+
+    const area = document.createElement('textarea');
+    area.className = 'btw-edit-area';
+    area.value = message.content;
+    wrapper.appendChild(area);
+
+    const actions = document.createElement('div');
+    actions.className = 'btw-edit-actions';
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'menu_button';
+    cancel.textContent = 'Cancel';
+    cancel.addEventListener('click', () => cancelEdit());
+    const save = document.createElement('button');
+    save.type = 'button';
+    save.className = 'menu_button';
+    save.textContent = 'Save & resend';
+    save.addEventListener('click', () => commitEdit(index, area.value).catch(error => console.error(LOG_PREFIX, error)));
+    actions.append(cancel, save);
+    wrapper.appendChild(actions);
+
+    area.addEventListener('input', () => growTextarea(area, 240));
+    area.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            cancelEdit();
+            return;
+        }
+        if (event.key !== 'Enter' || event.shiftKey) return;
+        const sendOnEnter = ctx().shouldSendOnEnter?.() ?? true;
+        if (!event.ctrlKey && !event.metaKey && !sendOnEnter) return;
+        event.preventDefault();
+        commitEdit(index, area.value).catch(error => console.error(LOG_PREFIX, error));
+    });
+
+    growTextarea(area, 240);
+    area.focus();
+    area.setSelectionRange(area.value.length, area.value.length);
+}
+
+/** Put the edited bubble back the way it was, without touching the transcript. */
+function cancelEdit() {
+    if (editingIndex < 0) return;
+    const index = editingIndex;
+    editingIndex = -1;
+    const wrapper = panel?.querySelector(`.btw-message[data-index="${index}"]`);
+    const message = messages[index];
+    if (wrapper instanceof HTMLElement && message) wrapper.replaceWith(renderMessage(message, index));
+}
+
+/**
+ * @param {number} index
+ * @param {string} value
+ */
+async function commitEdit(index, value) {
+    const text = String(value || '').trim();
+    if (!text) {
+        toast('An empty message has nothing to ask.', 'warning');
+        return;
+    }
+    // The answer to this question is replaced by definition — `index + 1`.
+    if (!await rewindTo(index, index + 1, 'edit')) return;
+    await ask(text, { keepUndo: true });
+}
+
 /** @param {boolean} value */
 function setBusy(value) {
     busy = value;
@@ -554,6 +780,9 @@ function setBusy(value) {
     send.title = label;
     send.setAttribute('aria-label', label);
     send.innerHTML = `<i class="fa-solid ${canStop ? 'fa-stop' : 'fa-paper-plane'}"></i>`;
+    // Undoing mid-request would restore messages the reply is still being written
+    // into, so the offer waits for the request to settle.
+    updateUndoButton();
 }
 
 export function stopGeneration() {
@@ -567,15 +796,19 @@ export function stopGeneration() {
  * /btw slash command can pipe it.
  *
  * @param {string} question
+ * @param {{keepUndo?: boolean}} [options] `keepUndo` for the resend that a
+ *   regenerate or an edit just staged — every other question invalidates the
+ *   snapshot, which describes a transcript this answer would not belong to.
  * @returns {Promise<string>}
  */
-export async function ask(question) {
+export async function ask(question, options = {}) {
     const text = String(question || '').trim();
     if (!text) return '';
     if (busy) {
         toast('The side thread is still answering.', 'warning');
         return '';
     }
+    if (!options.keepUndo) undoStash = null;
 
     openPanel();
     const settings = getSettings();
@@ -664,25 +897,6 @@ function updateMessageBody(index, content) {
     if (pinned) scrollToBottom();
 }
 
-/**
- * Re-ask the question that produced the answer at `index`, dropping that answer
- * and everything after it.
- *
- * @param {number} index
- */
-async function regenerateFrom(index) {
-    if (busy) return;
-    const question = messages[index - 1];
-    if (!question || question.role !== 'user') {
-        toast('Cannot find the question for this answer.', 'warning');
-        return;
-    }
-    messages = messages.slice(0, index - 1);
-    renderTranscript();
-    persist();
-    await ask(question.content);
-}
-
 // ── Stale-lore audit ────────────────────────────────────────────────────────
 
 async function showAuditDialog() {
@@ -766,6 +980,8 @@ async function startAudit(scope) {
     openPanel();
     const settings = getSettings();
     lastAuditElapsed = scope.elapsed ?? lastAuditElapsed;
+    // An audit appends to the transcript, so the snapshot no longer describes it.
+    undoStash = null;
 
     setBusy(true);
     setStatus('Collecting targets…');
@@ -1007,6 +1223,8 @@ export function onChatChanged() {
     // the chat we just left, and its ids would resolve against the wrong entries.
     auditTargetIndex = new Map();
     auditRunId += 1;
+    // Same reason: restoring it would write another chat's thread over this one.
+    undoStash = null;
     if (!panel) return;
     stopGeneration();
     setBusy(false);
